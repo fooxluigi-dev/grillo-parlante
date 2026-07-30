@@ -221,7 +221,7 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
       }
     } catch (e) {
       console.error('Parse error:', e);
-      apiDone = true;
+      setParsed({ ...fallback, _isFallback: true });
     }
 
     setParsing(false);
