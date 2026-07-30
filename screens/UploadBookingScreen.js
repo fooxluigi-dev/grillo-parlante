@@ -117,6 +117,30 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
     texts.push("I'll create the perfect itinerary, just give me a moment... 🦗");
     return texts;
   };
+
+  // ─── Client-side image resize ───
+  const resizeImageClientSide = (dataUrl, maxDim) => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        let { width, height } = img;
+        if (width > maxDim || height > maxDim) {
+          const ratio = Math.min(maxDim / width, maxDim / height);
+          width = Math.round(width * ratio);
+          height = Math.round(height * ratio);
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', 0.85));
+      };
+      img.onerror = () => resolve(dataUrl);
+      img.src = dataUrl;
+    });
+  };
+
   // ─── Parse the booking ───
   const parseBooking = async () => {
     setPhase(1);
@@ -145,11 +169,17 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
         const steps = ['📸 Reading...', '🔍 Scanning...', '📝 Recognizing...', '🧠 Extracting...', '📍 Finding...', '✅ Building...'];
         steps.forEach((_, i) => setTimeout(() => setStep(i), i * 1500 + 500));
 
+        // Resize image on client to avoid Vercel body size limits
+        let processedImage = images[0];
+        if (Platform.OS === 'web' && typeof document !== 'undefined') {
+          processedImage = await resizeImageClientSide(images[0], 800);
+        }
+
         // Send image to server-side OCR (OCR.space + DeepSeek)
         setStep(1);
         const response = await apiCall(API_ENDPOINTS.PARSE_BOOKING, {
           method: 'POST',
-          body: JSON.stringify({ images: [images[0]] }),
+          body: JSON.stringify({ images: [processedImage] }),
         });
         if (response.ok) {
           const data = await response.json();
