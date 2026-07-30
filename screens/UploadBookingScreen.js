@@ -46,13 +46,12 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
       });
       if (!files.length) return;
 
-      // Read → resize → get JPEG data URL (~200KB)
-      const raw = await new Promise((r) => {
-        const reader = new FileReader();
-        reader.onload = () => r(reader.result);
-        reader.readAsDataURL(files[0]);
-      });
-      dataUrl = await resize(raw);
+      const file = files[0];
+      // Log file info for debugging
+      console.log('Picked file:', file.name, file.type, (file.size / 1024).toFixed(1) + 'KB');
+
+      // Read as blob, resize client-side, get data URL
+      dataUrl = await readAndResize(file);
     } else {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ['images'], quality: 0.5, base64: true,
@@ -64,6 +63,22 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
     setImage(dataUrl);
     parseImage(dataUrl);
   };
+
+  // ─── Read a File, resize via canvas, return JPEG data URL ───
+  const readAndResize = (file) => new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const raw = reader.result;
+      // If format is not supported for canvas, send as-is
+      const isSupported = raw.startsWith('data:image/png;') || raw.startsWith('data:image/jpeg;') || raw.startsWith('data:image/jpg;') || raw.startsWith('data:image/gif;') || raw.startsWith('data:image/webp;');
+      if (!isSupported) {
+        console.log('Unsupported format for resize, sending raw:', raw.slice(0, 30));
+        return resolve(raw);
+      }
+      resize(raw).then(resolve);
+    };
+    reader.readAsDataURL(file);
+  });
 
   // ─── Client-side resize (web only) ───
   const resize = (dataUrl) => new Promise((resolve) => {
