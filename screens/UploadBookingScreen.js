@@ -6,7 +6,6 @@ import {
 import * as ImagePicker from 'expo-image-picker';
 import { Colors } from '../theme/colors';
 import { apiCall, API_ENDPOINTS } from '../utils/api';
-import * as Tesseract from 'tesseract.js';
 
 const { width: W } = Dimensions.get('window');
 
@@ -19,7 +18,6 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
   const [textIdx, setTextIdx] = useState(-1);
   const [ocrProgress, setOcrProgress] = useState(0);
   const [showManualForm, setShowManualForm] = useState(false);
-  const [manualData, setManualData] = useState({ destination: '', checkIn: '', checkOut: '', hotel: '' });
 
   // Animations
   const contentOp = useRef(new Animated.Value(0)).current;
@@ -119,24 +117,6 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
     texts.push("I'll create the perfect itinerary, just give me a moment... 🦗");
     return texts;
   };
-  // ─── Tesseract OCR in browser ───
-  const runOcrInBrowser = async (imageDataUrl, onProgress) => {
-    try {
-      const result = await Tesseract.recognize(imageDataUrl, 'eng+ita', {
-        logger: (info) => {
-          if (info.status === 'recognizing text') {
-            const pct = Math.round(info.progress * 100);
-            onProgress?.(pct);
-          }
-        },
-      });
-      return result.data.text.trim();
-    } catch (err) {
-      console.error('Tesseract error:', err);
-      return '';
-    }
-  };
-
   // ─── Parse the booking ───
   const parseBooking = async () => {
     setPhase(1);
@@ -148,111 +128,56 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
       Animated.spring(parseScale, { toValue: 1, tension: 40, friction: 10, useNativeDriver: true }),
     ]).start();
 
-    // Show initial loading step
     setStep(0);
 
-    let extractedText = '';
     let resultData = null;
+    const fallback = {
+      destination: images.length === 0 ? 'your destination' : 'Unknown',
+      checkIn: '—', checkOut: '—', hotel: '—', confirmation: '—', guests: '—',
+      pages: images.length || 1,
+      _isDemo: images.length === 0,
+      _ocrFailed: images.length > 0,
+    };
 
-    // PHASE 1: OCR — run immediately, show progress
     if (images.length > 0) {
       try {
-        setStep(1); // Scanning text
-        extractedText = await runOcrInBrowser(images[0], (pct) => {
-          setOcrProgress(pct);
-          if (pct > 20) setStep(2);  // Recognizing
-          if (pct > 50) setStep(3);  // Extracting
-          if (pct > 75) setStep(4);  // Finding destination
-        });
-        if (extractedText) {
-          console.log('OCR extracted:', extractedText.slice(0, 200));
-          setStep(5); // Building
-        }
-      } catch (ocrErr) {
-        console.error('OCR failed:', ocrErr);
-      }
-    }
+        // Animate steps while server processes
+        const steps = ['📸 Reading...', '🔍 Scanning...', '📝 Recognizing...', '🧠 Extracting...', '📍 Finding...', '✅ Building...'];
+        steps.forEach((_, i) => setTimeout(() => setStep(i), i * 1500 + 500));
 
-    // PHASE 2: Parse with DeepSeek if we got text
-    if (extractedText) {
-      try {
-        setStep(5);
+        // Send image to server-side OCR (OCR.space + DeepSeek)
+        setStep(1);
         const response = await apiCall(API_ENDPOINTS.PARSE_BOOKING, {
           method: 'POST',
-          body: JSON.stringify({ ocrText: extractedText }),
+          body: JSON.stringify({ images: [images[0]] }),
         });
         if (response.ok) {
           const data = await response.json();
-          resultData = { ...data, _isFallback: false, _isDemo: false };
-        }
-      } catch (apiErr) {
-        console.error('DeepSeek parse error:', apiErr);
-      }
-    }
-
-    // If we got OCR text but DeepSeek failed, show raw text
-    if (extractedText && !resultData) {
-      const firstLine = extractedText.split('\n')[0].trim() || 'Read from image';
-      resultData = {
-        destination: firstLine,
-        checkIn: '—', checkOut: '—', hotel: '—', confirmation: '—', guests: '—',
-        _rawOcr: extractedText.slice(0, 500),
-      };
-    }
-
-    // Full fallback — no text extracted at all
-    if (!resultData) {
-      resultData = {
-        destination: images.length === 0 ? 'your destination' : 'Unknown',
-        checkIn: '—', checkOut: '—', hotel: '—', confirmation: '—', guests: '—',
-        pages: images.length || 1,
-        _isDemo: images.length === 0,
-        _ocrFailed: images.length > 0,
-      };
-    }
-
-    // NEW: If we have images and OCR failed, try server-side as fallback
-    if (images.length > 0 && resultData._ocrFailed) {
-      try {
-        const serverResponse = await apiCall(API_ENDPOINTS.PARSE_BOOKING, {
-          method: 'POST',
-          body: JSON.stringify({ images }),
-        });
-        if (serverResponse.ok) {
-          const serverData = await serverResponse.json();
-          if (!serverData._ocrFailed && serverData.destination && serverData.destination !== 'Unknown') {
-            resultData = { ...serverData, _isFallback: false, _isDemo: false };
+          if (data && data.destination && data.destination !== 'Unknown') {
+            resultData = { ...data, _isFallback: false, _isDemo: false };
+            setStep(5);
           }
         }
-      } catch (e) {
-        console.error('Server OCR fallback also failed:', e);
+      } catch (err) {
+        console.error('Server OCR failed:', err);
       }
+    }
+
+    if (!resultData) {
+      resultData = fallback;
     }
 
     setParsed(resultData);
 
-    // PHASE 3: Run steps animation (now with real data)
-    const steps = [
-      '📸 Image loaded',
-      '🔍 Text scanned',
-      '📝 Info recognized',
-      '🧠 Data extracted',
-      '📍 Destination found',
-      '✅ Trip built',
-    ];
-
-    // Fade out parse view
+    // Show results
     Animated.timing(parseOp, { toValue: 0, duration: 200, useNativeDriver: true }).start();
     Animated.timing(resultOp, { toValue: 1, duration: 300, useNativeDriver: true }).start();
 
-    // Show phase 2 (texts)
     setPhase(2);
-
     const texts = buildPersonalTexts(resultData);
     setTextIdx(0);
     textBlend.setValue(1);
 
-    // Queue subsequent texts
     if (texts.length > 1) {
       for (let i = 1; i < texts.length; i++) {
         setTimeout(() => {
@@ -261,7 +186,6 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
           Animated.timing(textBlend, { toValue: 1, duration: 600, useNativeDriver: true }).start();
         }, i * 3000);
       }
-      // Show result card after all texts
       setTimeout(() => {
         setPhase(3);
         Animated.parallel([
@@ -270,13 +194,7 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
         ]).start();
       }, texts.length * 3000 + 500);
     } else {
-      setTimeout(() => {
-        setPhase(3);
-        Animated.parallel([
-          Animated.timing(resultOp, { toValue: 1, duration: 500, useNativeDriver: true }),
-          Animated.timing(resultSlide, { toValue: 0, duration: 400, useNativeDriver: true }),
-        ]).start();
-      }, 3000);
+      setTimeout(() => { setPhase(3); }, 3000);
     }
 
     setParsing(false);
@@ -385,14 +303,6 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
             <Animated.View style={[styles.parseCard, { opacity: parseOp, transform: [{ scale: parseScale }] }]}>
               <Text style={styles.parseEmoji}>🔍</Text>
               <Text style={styles.parseTitle}>Grillo is reading your booking</Text>
-              {ocrProgress > 0 && (
-                <>
-                  <View style={styles.progressBar}>
-                    <View style={[styles.progressFill, { width: `${ocrProgress}%` }]} />
-                  </View>
-                  <Text style={styles.progressText}>{ocrProgress}%</Text>
-                </>
-              )}
               <View style={styles.parseSteps}>
                 {['📸 Loading OCR...', '🔍 Scanning...', '📝 Recognizing...', '🧠 Extracting...', '📍 Finding...', '✅ Building...'].map((s, i) => (
                   <Animated.Text key={i} style={[styles.parseStepText, {
