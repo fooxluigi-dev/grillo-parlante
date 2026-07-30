@@ -16,6 +16,7 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
   const [phase, setPhase] = useState(0); // 0=picker, 1=parsing, 2=texts, 3=results+card
   const [step, setStep] = useState(-1);
   const [textIdx, setTextIdx] = useState(-1);
+  const [ocrProgress, setOcrProgress] = useState(0);
 
   // Animations
   const contentOp = useRef(new Animated.Value(0)).current;
@@ -84,8 +85,7 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
   // ─── Build personal texts from parsed data ───
   const buildPersonalTexts = (data) => {
     const texts = [];
-    // Show generic loading/reading texts when data is fallback
-    if (data?._isFallback) {
+    if (data?._isFallback || data?._ocrFailed) {
       texts.push('👀 Let me look at your booking...');
       texts.push('Reading the details on your screenshot...');
       texts.push('Almost there! Processing the info...');
@@ -117,59 +117,123 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
     return texts;
   };
 
+  // ─── Tesseract OCR in browser (lazy loaded) ───
+  const runOcrInBrowser = async (imageDataUrl, onProgress) => {
+    try {
+      const Tesseract = await import('tesseract.js');
+      const result = await Tesseract.recognize(imageDataUrl, 'eng+ita', {
+        logger: (info) => {
+          if (info.status === 'recognizing text') {
+            const pct = Math.round(info.progress * 100);
+            onProgress?.(pct);
+          }
+        },
+      });
+      return result.data.text.trim();
+    } catch (err) {
+      console.error('Tesseract error:', err);
+      return '';
+    }
+  };
+
   // ─── Parse the booking ───
   const parseBooking = async () => {
     setPhase(1);
     setParsing(true);
     setTextIdx(-1);
+    setOcrProgress(0);
     Animated.parallel([
       Animated.timing(parseOp, { toValue: 1, duration: 500, useNativeDriver: true }),
       Animated.spring(parseScale, { toValue: 1, tension: 40, friction: 10, useNativeDriver: true }),
     ]).start();
 
-    // Step animation
+    // Parsing steps — animated independently of OCR
     const steps = [
-      '📸 Reading your screenshot...',
-      '✈️ Detecting flight details...',
+      '📸 Loading OCR engine...',
+      '🔍 Scanning text...',
+      '📝 Recognizing characters...',
+      '🧠 Extracting info...',
       '📍 Finding destination...',
-      '📅 Extracting dates...',
-      '🏨 Identifying accommodation...',
-      '🧠 Building your trip...',
+      '✅ Building your trip...',
     ];
-    steps.forEach((_, i) => setTimeout(() => setStep(i), i * 800 + 400));
+    steps.forEach((_, i) => setTimeout(() => setStep(i), i * 1200 + 400));
 
-    // Fallback data — marked as DEMO so the UI can distinguish real vs fake
-    let apiDone = false;
-    let apiResult = null;
-    const fallback = {
-      destination: 'your destination',
-      checkIn: '—',
-      checkOut: '—',
-      hotel: '—',
-      confirmation: '—',
-      guests: '—',
-      pages: images.length || 1,
-      _isDemo: images.length === 0,
-      _isFallback: true,
-    };
+    let extractedText = '';
 
-    // Phase ref to avoid stale closures
-    const currentPhaseRef = { current: 1 };
+    if (images.length > 0) {
+      try {
+        setTimeout(() => setStep(1), 1600);
+        extractedText = await runOcrInBrowser(images[0], (pct) => {
+          setOcrProgress(pct);
+          if (pct > 20) setStep(2);
+          if (pct > 50) setStep(3);
+          if (pct > 75) setStep(4);
+        });
+        if (extractedText) {
+          console.log('OCR extracted:', extractedText.slice(0, 200));
+          setTimeout(() => setStep(5), 500);
+        }
+      } catch (ocrErr) {
+        console.error('OCR failed:', ocrErr);
+      }
+    }
 
-    // After steps complete → show texts + results (independent of API)
-    setTimeout(() => {
-      currentPhaseRef.current = 2;
-      const data = apiResult || fallback;
-      setParsed(data);
+    // After steps animation completes, show results
+    const showResults = async () => {
+      let resultData;
+
+      if (extractedText) {
+        // Send extracted TEXT (not image) to DeepSeek for structured parsing
+        try {
+          const response = await apiCall(API_ENDPOINTS.PARSE_BOOKING, {
+            method: 'POST',
+            body: JSON.stringify({
+              ocrText: extractedText,
+              _clientOcr: true,
+            }),
+          });
+          if (response.ok) {
+            const data = await response.json();
+            resultData = { ...data, _isFallback: false, _isDemo: false };
+          } else {
+            // DeepSeek unavailable — show raw OCR text
+            const firstLine = extractedText.split('\n')[0].trim() || 'Read from image';
+            resultData = {
+              destination: firstLine,
+              checkIn: '—', checkOut: '—', hotel: '—', confirmation: '—', guests: '—',
+              _rawOcr: extractedText.slice(0, 500),
+            };
+          }
+        } catch (apiErr) {
+          const firstLine = extractedText.split('\n')[0].trim() || 'Read from image';
+          resultData = {
+            destination: firstLine,
+            checkIn: '—', checkOut: '—', hotel: '—', confirmation: '—', guests: '—',
+            _rawOcr: extractedText.slice(0, 500),
+          };
+        }
+      } else {
+        // No image or no OCR result
+        resultData = {
+          destination: images.length === 0 ? 'your destination' : 'Unknown',
+          checkIn: '—', checkOut: '—', hotel: '—', confirmation: '—', guests: '—',
+          pages: images.length || 1,
+          _isDemo: images.length === 0,
+          _ocrFailed: images.length > 0,
+        };
+      }
+
+      setParsed(resultData);
       setPhase(2);
-      // Fade parse out, show text container
+
+      // Transition animations
       Animated.timing(parseOp, { toValue: 0, duration: 200, useNativeDriver: true }).start();
       Animated.timing(resultOp, { toValue: 1, duration: 300, useNativeDriver: true }).start();
-      // First text immediately visible
-      const texts = buildPersonalTexts(data);
+
+      const texts = buildPersonalTexts(resultData);
       setTextIdx(0);
       textBlend.setValue(1);
-      // Queue subsequent texts
+
       if (texts.length > 1) {
         for (let i = 1; i < texts.length; i++) {
           setTimeout(() => {
@@ -178,7 +242,6 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
             Animated.timing(textBlend, { toValue: 1, duration: 600, useNativeDriver: true }).start();
           }, i * 3000);
         }
-        // Auto-show result card after all texts
         setTimeout(() => {
           setPhase(3);
           Animated.parallel([
@@ -195,46 +258,12 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
           ]).start();
         }, 3000);
       }
-    }, steps.length * 800 + 400);
 
-    // Fire-and-forget: call API in background
-    try {
-      let result;
-      if (images.length === 0) {
-        await new Promise(r => setTimeout(r, 2000));
-        result = fallback;
-      } else {
-        const response = await apiCall(API_ENDPOINTS.PARSE_BOOKING, {
-          method: 'POST',
-          body: JSON.stringify({ images }),
-        });
-        if (!response.ok) throw new Error('Parse failed');
-        result = await response.json();
-      }
-      // Update with real data even if results already showing
-      apiDone = true;
-      apiResult = result;
-      if (currentPhaseRef.current >= 2) {
-        setParsed({ ...result, _isFallback: false, _isDemo: false });
-        // Restart texts with real data
-        const texts = buildPersonalTexts(result);
-        if (texts.length > 0) {
-          setTextIdx(-1);
-          texts.forEach((_, i) => {
-            setTimeout(() => {
-              setTextIdx(i);
-              textBlend.setValue(0);
-              Animated.timing(textBlend, { toValue: 1, duration: 600, useNativeDriver: true }).start();
-            }, i * 3000 + 500);
-          });
-        }
-      }
-    } catch (e) {
-      console.error('Parse error:', e);
-      setParsed({ ...fallback, _isFallback: true });
-    }
+      setParsing(false);
+    };
 
-    setParsing(false);
+    // Wait for step animation then show results
+    setTimeout(showResults, steps.length * 1200 + 500);
   };
 
   const confirmBooking = () => {
@@ -340,8 +369,16 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
             <Animated.View style={[styles.parseCard, { opacity: parseOp, transform: [{ scale: parseScale }] }]}>
               <Text style={styles.parseEmoji}>🔍</Text>
               <Text style={styles.parseTitle}>Grillo is reading your booking</Text>
+              {ocrProgress > 0 && (
+                <>
+                  <View style={styles.progressBar}>
+                    <View style={[styles.progressFill, { width: `${ocrProgress}%` }]} />
+                  </View>
+                  <Text style={styles.progressText}>{ocrProgress}%</Text>
+                </>
+              )}
               <View style={styles.parseSteps}>
-                {['📸 Reading…', '✈️ Flight…', '📍 Destination…', '📅 Dates…', '🏨 Hotel…', '🧠 Building…'].map((s, i) => (
+                {['📸 Loading OCR...', '🔍 Scanning...', '📝 Recognizing...', '🧠 Extracting...', '📍 Finding...', '✅ Building...'].map((s, i) => (
                   <Animated.Text key={i} style={[styles.parseStepText, {
                     opacity: step >= i ? 1 : 0.2,
                     transform: [{ translateX: step >= i ? 0 : -8 }],
@@ -357,7 +394,6 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
         {/* ─── PHASE 2+3: Cinematic texts + result card ─── */}
         {(phase === 2 || phase === 3) && parsed && (
           <View style={styles.resultWrap}>
-            {/* Personal texts */}
             <View style={styles.textsContainer}>
               {personalTexts.map((t, i) => (
                 <Animated.Text key={i} style={[styles.personalText, {
@@ -369,18 +405,12 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
               ))}
             </View>
 
-            {/* Result card */}
             {phase === 3 && (
               <Animated.View style={[styles.resultCard, { opacity: resultOp, transform: [{ translateY: resultSlide }] }]}>
                 <Text style={styles.resultBadge}>✅ Booking detected</Text>
-                {parsed._isFallback && images.length > 0 && (
+                {parsed._ocrFailed && (
                   <Text style={styles.fallbackWarning}>
-                    ⏳ Reading your screenshot... this may take a moment.
-                  </Text>
-                )}
-                {parsed._isDemo && (
-                  <Text style={styles.fallbackWarning}>
-                    🦗 This is a demo — no screenshot was uploaded.
+                    ⚠️ Could not read the screenshot text.{'\n'}You can still create a trip manually.
                   </Text>
                 )}
                 <View style={styles.resultRow}>
@@ -487,6 +517,12 @@ const styles = StyleSheet.create({
   },
   parseEmoji: { fontSize: 48, marginBottom: 12 },
   parseTitle: { fontSize: 18, fontWeight: '700', color: '#fff', marginBottom: 24, textAlign: 'center' },
+  progressBar: {
+    width: '100%', height: 4, backgroundColor: 'rgba(232,168,50,0.15)',
+    borderRadius: 2, marginBottom: 8, overflow: 'hidden',
+  },
+  progressFill: { height: 4, backgroundColor: 'rgba(232,168,50,0.8)', borderRadius: 2 },
+  progressText: { fontSize: 11, color: 'rgba(232,168,50,0.6)', marginBottom: 12 },
   parseSteps: { alignItems: 'flex-start', width: '100%', gap: 8 },
   parseStepText: { fontSize: 13, color: 'rgba(255,255,255,0.7)', fontWeight: '500' },
 
@@ -498,28 +534,20 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: 16, padding: 20,
     alignItems: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)',
   },
-  emailIcon: { fontSize: 24, marginBottom: 8 },
-  emailLabel: { fontSize: 14, fontWeight: '700', color: '#fff', marginBottom: 4 },
-  emailSub: { fontSize: 12, color: 'rgba(255,255,255,0.4)', textAlign: 'center', lineHeight: 18 },
-  emailAddr: { color: 'rgba(232,168,50,0.8)', fontWeight: '700' },
+  emailIcon: { fontSize: 28, marginBottom: 8 },
+  emailLabel: { fontSize: 15, fontWeight: '700', color: '#fff', marginBottom: 6 },
+  emailSub: { fontSize: 12, color: 'rgba(255,255,255,0.35)', textAlign: 'center', lineHeight: 18 },
+  emailAddr: { fontSize: 12, color: 'rgba(232,168,50,0.7)', fontWeight: '600' },
 
-  resultWrap: {
-    flex: 1, justifyContent: 'center', alignItems: 'center',
-    paddingHorizontal: 28, backgroundColor: '#0a0a0a',
-  },
-  textsContainer: {
-    alignItems: 'center', justifyContent: 'center',
-    minHeight: 100, marginBottom: 24,
-  },
+  resultWrap: { flex: 1, paddingHorizontal: 24, paddingTop: 20 },
+  textsContainer: { height: 120, justifyContent: 'center', alignItems: 'center', marginBottom: 20 },
   personalText: {
-    position: 'absolute', fontSize: 17, fontWeight: '600', color: '#fff',
-    textAlign: 'center', lineHeight: 26, paddingHorizontal: 8,
+    position: 'absolute', fontSize: 18, fontWeight: '600', color: '#fff',
+    textAlign: 'center', lineHeight: 26, maxWidth: 340,
   },
-
   resultCard: {
-    backgroundColor: '#1a1a1a', borderRadius: 20, padding: 20,
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)',
-    width: '100%', maxWidth: 340,
+    backgroundColor: '#1a1a1a', borderRadius: 24, padding: 24,
+    borderWidth: 1, borderColor: 'rgba(232,168,50,0.12)',
   },
   resultBadge: {
     fontSize: 14, fontWeight: '700', color: '#4ade80', marginBottom: 16,
@@ -532,10 +560,10 @@ const styles = StyleSheet.create({
   resultRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 10 },
   resultDivider: { height: 1, backgroundColor: 'rgba(255,255,255,0.05)' },
   resultLabel: { fontSize: 13, color: 'rgba(255,255,255,0.45)', fontWeight: '500' },
-  resultValue: { fontSize: 13, fontWeight: '700', color: '#fff', maxWidth: '55%', textAlign: 'right' },
+  resultValue: { fontSize: 13, color: '#fff', fontWeight: '600', maxWidth: '55%', textAlign: 'right' },
   confirmBtn: {
-    backgroundColor: 'rgba(232,168,50,0.9)', paddingVertical: 16, borderRadius: 16,
-    alignItems: 'center', marginTop: 16,
+    backgroundColor: 'rgba(232,168,50,0.9)', borderRadius: 14, paddingVertical: 14,
+    alignItems: 'center', marginTop: 20,
   },
-  confirmText: { fontSize: 16, fontWeight: '700', color: '#0a0a0a' },
+  confirmText: { fontSize: 15, fontWeight: '800', color: '#0a0a0a' },
 });
