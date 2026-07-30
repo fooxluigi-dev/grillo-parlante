@@ -4,18 +4,20 @@ import {
   Image, Platform, SafeAreaView, Animated, Dimensions, TextInput
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
-import { Colors } from '../theme/colors';
 
 const { width: W } = Dimensions.get('window');
+const API = 'https://gp-landing-rho.vercel.app/api/parse-booking';
 
 export default function UploadBookingScreen({ onClose, onBookingParsed }) {
-  const [images, setImages] = useState([]);
+  const [image, setImage] = useState(null);        // base64 data URL
   const [parsing, setParsing] = useState(false);
-  const [parsed, setParsed] = useState(null);
-  const [phase, setPhase] = useState(0); // 0=picker, 1=parsing, 2=texts, 3=results+card
+  const [phase, setPhase] = useState(0);            // 0=pick 1=parsing 2=result
   const [step, setStep] = useState(-1);
+  const [parsed, setParsed] = useState(null);
+  const [error, setError] = useState('');
+  const [manualOpen, setManualOpen] = useState(false);
+  const [manual, setManual] = useState({ destination: '', checkIn: '', checkOut: '', hotel: '' });
   const [textIdx, setTextIdx] = useState(-1);
-  const [showManualForm, setShowManualForm] = useState(false);
 
   // Animations
   const contentOp = useRef(new Animated.Value(0)).current;
@@ -29,408 +31,266 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
     Animated.timing(contentOp, { toValue: 1, duration: 600, useNativeDriver: true }).start();
   }, []);
 
-  // ─── Web-safe image picker ───
-  const pickImages = async (useCamera) => {
-    let files = [];
+  // ─── Pick image (web + native) ───
+  const pick = async () => {
+    let dataUrl = '';
 
     if (Platform.OS === 'web') {
-      const input = document.createElement('input');
-      input.type = 'file';
-      if (useCamera) {
-        input.setAttribute('capture', 'environment');
-        input.accept = 'image/*';
-      } else {
-        input.removeAttribute('capture');
-        input.accept = 'image/*';
-      }
-      input.multiple = false;
-
-      files = await new Promise((resolve) => {
-        const timer = setTimeout(() => resolve([]), 120000);
-        input.onchange = (e) => {
-          clearTimeout(timer);
-          resolve(Array.from(e.target.files || []));
-        };
-        input.click();
+      const files = await new Promise((resolve) => {
+        const el = document.createElement('input');
+        el.type = 'file';
+        el.accept = 'image/*';
+        el.multiple = false;
+        el.onchange = (e) => resolve(Array.from(e.target.files || []));
+        el.click();
       });
-      if (files.length === 0) return;
+      if (!files.length) return;
 
-      const base64Images = await Promise.all(files.map((file) => {
-        return new Promise((resolve) => {
-          const reader = new FileReader();
-          reader.onload = () => {
-            // Auto-resize large images on web to stay within Vercel limits
-            const dataUrl = reader.result;
-            if (typeof document !== 'undefined') {
-              try {
-                const img = new Image();
-                img.onload = () => {
-                  let { width, height } = img;
-                  const maxDim = 1200;
-                  if (width > maxDim || height > maxDim) {
-                    const ratio = Math.min(maxDim / width, maxDim / height);
-                    width = Math.round(width * ratio);
-                    height = Math.round(height * ratio);
-                  }
-                  const canvas = document.createElement('canvas');
-                  canvas.width = width;
-                  canvas.height = height;
-                  const ctx = canvas.getContext('2d');
-                  ctx.drawImage(img, 0, 0, width, height);
-                  resolve(canvas.toDataURL('image/jpeg', 0.7));
-                };
-                img.onerror = () => resolve(dataUrl);
-                img.src = dataUrl;
-              } catch (e) {
-                resolve(dataUrl);
-              }
-            } else {
-              resolve(dataUrl);
-            }
-          };
-          reader.onerror = () => resolve('');
-          reader.readAsDataURL(file);
-        });
-      }));
-      setImages(prev => [...prev, ...base64Images.filter(Boolean)]);
-      return;
+      // Read → resize → get JPEG data URL (~200KB)
+      const raw = await new Promise((r) => {
+        const reader = new FileReader();
+        reader.onload = () => r(reader.result);
+        reader.readAsDataURL(files[0]);
+      });
+      dataUrl = await resize(raw);
+    } else {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'], quality: 0.5, base64: true,
+      });
+      if (result.canceled || !result.assets?.length) return;
+      dataUrl = `data:image/jpeg;base64,${result.assets[0].base64}`;
     }
 
-    // Native
-    const options = { mediaTypes: ['images'], quality: 0.5, base64: true };
-    const result = useCamera
-      ? await ImagePicker.launchCameraAsync(options)
-      : await ImagePicker.launchImageLibraryAsync(options);
-    if (!result.canceled && result.assets?.length > 0) {
-      setImages(prev => [...prev, ...result.assets.map(a => a.base64 ? `data:image/jpeg;base64,${a.base64}` : a.uri)]);
-    }
+    setImage(dataUrl);
+    parseImage(dataUrl);
   };
 
-  const removeImage = (index) => {
-    setImages(prev => prev.filter((_, i) => i !== index));
-  };
-
-  // ─── Build personal texts from parsed data ───
-  const buildPersonalTexts = (data) => {
-    const texts = [];
-    if (data?._isFallback || data?._ocrFailed) {
-      texts.push('👀 Let me look at your booking...');
-      texts.push('Reading the details on your screenshot...');
-      texts.push('Almost there! Processing the info...');
-      texts.push('I can see travel plans forming... ✈️');
-      texts.push('Let me put together something special for you... ✨');
-      texts.push("Just give me a moment... 🦗");
-      return texts;
-    }
-    if (data?.destination && data.destination !== 'your destination' && data.destination !== 'Unknown') {
-      texts.push(`I can see you're heading to ${data.destination}! 🏖️`);
-    }
-    if (data?.hotel && data.hotel !== '—') {
-      texts.push(`You'll be staying at ${data.hotel} — looks lovely! 🏠`);
-    }
-    if (data?.guests && data.guests !== '—') {
-      texts.push(`${data.guests} — sounds like a great crew! 👥`);
-    }
-    if (data?.checkIn && data.checkIn !== '—') {
-      texts.push(`Your adventure starts ${data.checkIn} 📅`);
-      if (data?.checkOut && data.checkOut !== '—') {
-        texts.push(`Until ${data.checkOut} — that's a solid trip! 🌴`);
+  // ─── Client-side resize (web only) ───
+  const resize = (dataUrl) => new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      let { width, height } = img;
+      const maxDim = 1200;
+      if (width > maxDim || height > maxDim) {
+        const ratio = Math.min(maxDim / width, maxDim / height);
+        width = Math.round(width * ratio);
+        height = Math.round(height * ratio);
       }
-    }
-    if (data?.confirmation && data.confirmation !== '—') {
-      texts.push(`Booking ref ${data.confirmation} — got it. ✅`);
-    }
-    texts.push('Let me put together something special for you... ✨');
-    texts.push("I'll create the perfect itinerary, just give me a moment... 🦗");
-    return texts;
-  };
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+      resolve(canvas.toDataURL('image/jpeg', 0.7));
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
 
-  // ─── Parse the booking ───
-  const parseBooking = async () => {
-    setPhase(1);
+  // ─── Parse: send image → OCR → DeepSeek → show result ───
+  const parseImage = async (dataUrl) => {
     setParsing(true);
+    setPhase(1);
+    setStep(0);
+    setError('');
     setTextIdx(-1);
-    setOcrProgress(0);
+
     Animated.parallel([
       Animated.timing(parseOp, { toValue: 1, duration: 500, useNativeDriver: true }),
       Animated.spring(parseScale, { toValue: 1, tension: 40, friction: 10, useNativeDriver: true }),
     ]).start();
 
-    setStep(0);
+    // Step animation (runs in background)
+    const steps = ['📸 Loading...', '🔍 Scanning...', '📝 Reading...', '🧠 Parsing...', '📍 Found!', '✅ Done!'];
+    steps.forEach((_, i) => setTimeout(() => setStep(i), i * 1500 + 400));
 
-    let resultData = null;
-    const fallback = {
-      destination: images.length === 0 ? 'your destination' : 'Unknown',
-      checkIn: '—', checkOut: '—', hotel: '—', confirmation: '—', guests: '—',
-      pages: images.length || 1,
-      _isDemo: images.length === 0,
-      _ocrFailed: images.length > 0,
-    };
-
-    if (images.length > 0) {
-      try {
-        // Animate steps while server processes
-        const steps = ['📸 Reading...', '🔍 Scanning...', '📝 Recognizing...', '🧠 Extracting...', '📍 Finding...', '✅ Building...'];
-        steps.forEach((_, i) => setTimeout(() => setStep(i), i * 1500 + 500));
-
-        // Send image to server-side OCR (OCR.space + DeepSeek)
-        setStep(1);
-        const response = await fetch('https://gp-landing-rho.vercel.app/api/parse-booking', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ images: [images[0]] }),
-        });
-        if (response.ok) {
-          const data = await response.json();
-          console.log('API response:', JSON.stringify(data).slice(0, 300));
-          if (data && data.destination && data.destination !== 'Unknown') {
-            resultData = { ...data, _isFallback: false, _isDemo: false };
-            setStep(5);
-          }
+    let result = null;
+    try {
+      const resp = await fetch(API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ images: [dataUrl] }),
+      });
+      if (resp.ok) {
+        const j = await resp.json();
+        if (j?.destination && j.destination !== 'Unknown') {
+          result = { ...j, _isFallback: false };
         }
-      } catch (err) {
-        console.error('Server OCR failed:', err);
       }
+    } catch (e) {
+      console.error('API error:', e);
+      setError('Could not reach the server. Try again?');
     }
 
-    if (!resultData) {
-      resultData = fallback;
+    // Fallback
+    if (!result) {
+      result = {
+        destination: 'your destination',
+        checkIn: '—', checkOut: '—', hotel: '—', confirmation: '—', guests: '—',
+        _isFallback: true,
+      };
     }
 
-    setParsed(resultData);
+    setParsed(result);
+    setParsing(false);
 
-    // Show results
+    // Transition: parsing → result
     Animated.timing(parseOp, { toValue: 0, duration: 200, useNativeDriver: true }).start();
     Animated.timing(resultOp, { toValue: 1, duration: 300, useNativeDriver: true }).start();
-
     setPhase(2);
-    const texts = buildPersonalTexts(resultData);
+
+    // Cinematic texts
+    const texts = buildTexts(result);
     setTextIdx(0);
     textBlend.setValue(1);
-
-    if (texts.length > 1) {
-      for (let i = 1; i < texts.length; i++) {
-        setTimeout(() => {
-          setTextIdx(i);
-          textBlend.setValue(0);
-          Animated.timing(textBlend, { toValue: 1, duration: 600, useNativeDriver: true }).start();
-        }, i * 3000);
-      }
+    for (let i = 1; i < texts.length; i++) {
       setTimeout(() => {
-        setPhase(3);
-        Animated.parallel([
-          Animated.timing(resultOp, { toValue: 1, duration: 500, useNativeDriver: true }),
-          Animated.timing(resultSlide, { toValue: 0, duration: 400, useNativeDriver: true }),
-        ]).start();
-      }, texts.length * 3000 + 500);
-    } else {
-      setTimeout(() => { setPhase(3); }, 3000);
+        setTextIdx(i);
+        textBlend.setValue(0);
+        Animated.timing(textBlend, { toValue: 1, duration: 600, useNativeDriver: true }).start();
+      }, i * 3000);
     }
+    setTimeout(() => {
+      Animated.timing(resultSlide, { toValue: 0, duration: 400, useNativeDriver: true }).start();
+    }, texts.length * 3000 + 500);
+  };
 
-    setParsing(false);
+  // ─── Build cinematic text lines ───
+  const buildTexts = (d) => {
+    const t = [];
+    if (d?._isFallback) {
+      t.push("👀 Let me look at your booking...");
+      t.push("Reading the details...");
+      t.push("Almost there! Processing the info...");
+      t.push("I'll create the perfect itinerary... 🦗");
+    } else {
+      if (d.destination && d.destination !== 'your destination')
+        t.push(`I can see you're heading to ${d.destination}! 🏖️`);
+      if (d.hotel && d.hotel !== '—')
+        t.push(`You'll be at ${d.hotel} — lovely! 🏠`);
+      if (d.checkIn && d.checkIn !== '—')
+        t.push(`Check-in ${d.checkIn} 📅`);
+      if (d.checkOut && d.checkOut !== '—')
+        t.push(`Check-out ${d.checkOut} 🌴`);
+      if (d.guests && d.guests !== '—')
+        t.push(`${d.guests} — great crew! 👥`);
+      if (d.confirmation && d.confirmation !== '—')
+        t.push(`Ref ${d.confirmation} ✅`);
+      t.push('Let me put together something special for you... ✨');
+      t.push("I'll create the perfect itinerary, just give me a moment... 🦗");
+    }
+    return t.filter(Boolean);
   };
 
   const confirmBooking = () => {
-    if (onBookingParsed) onBookingParsed(parsed);
-    if (onClose) onClose();
+    if (parsed) onBookingParsed?.(parsed);
   };
 
-  const hasImages = images.length > 0;
-  const personalTexts = parsed ? buildPersonalTexts(parsed) : [];
+  const applyManual = () => {
+    setParsed({ ...parsed, destination: manual.destination, checkIn: manual.checkIn, checkOut: manual.checkOut, hotel: manual.hotel, _isManual: true });
+    setManualOpen(false);
+  };
+
+  // ─── Render ───
+  const maxH = W * 1.25;
 
   return (
     <View style={styles.root}>
       <SafeAreaView style={{ flex: 1 }}>
-        {/* Header */}
-        <Animated.View style={[styles.header, { opacity: contentOp }]}>
-          <TouchableOpacity onPress={onClose} style={styles.backBtn}>
-            <Text style={styles.backText}>← Back</Text>
-          </TouchableOpacity>
-          <Text style={styles.brand}>Grillo</Text>
-          <View style={{ width: 50 }} />
-        </Animated.View>
+        <View style={styles.header}>
+          <TouchableOpacity onPress={onClose}><Text style={styles.headerBtn}>← Back</Text></TouchableOpacity>
+          <Text style={styles.headerTitle}>Grillo</Text>
+          <View style={{ width: 60 }} />
+        </View>
 
-        {/* ─── PHASE 0: Picker ─── */}
         {phase === 0 && (
-          <Animated.View style={{ flex: 1, opacity: contentOp }}>
-            <View style={styles.heroSection}>
-              <Text style={styles.mainLabel}>Upload your booking</Text>
-              <Text style={styles.subLabel}>
-                Take a screenshot of your confirmation{'\n'}and I'll take care of the rest.
-              </Text>
-            </View>
-
-            <View style={styles.pickerSection}>
-              <TouchableOpacity style={styles.pickerBtn} onPress={() => pickImages(true)} activeOpacity={0.8}>
-                <Text style={styles.pickerIcon}>📸</Text>
-                <Text style={styles.pickerLabel}>Take photo</Text>
-                <Text style={styles.pickerDesc}>Snap your booking confirmation</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.pickerBtn} onPress={() => pickImages(false)} activeOpacity={0.8}>
-                <Text style={styles.pickerIcon}>🖼️</Text>
-                <Text style={styles.pickerLabel}>From gallery</Text>
-                <Text style={styles.pickerDesc}>Choose existing screenshots</Text>
-              </TouchableOpacity>
-            </View>
-
-            {!hasImages && (
-              <TouchableOpacity style={styles.demoBtn} onPress={parseBooking} activeOpacity={0.8}>
-                <Text style={styles.demoIcon}>🦗</Text>
-                <View>
-                  <Text style={styles.demoLabel}>Try the demo</Text>
-                  <Text style={styles.demoDesc}>Test the full flow — Split, Croatia</Text>
-                </View>
-                <Text style={styles.demoArrow}>→</Text>
-              </TouchableOpacity>
-            )}
-
-            {hasImages && (
-              <View style={styles.previewSection}>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
-                  {images.map((uri, i) => (
-                    <View key={i} style={styles.thumbWrap}>
-                      <Image source={{ uri }} style={styles.thumb} resizeMode="cover" />
-                      <TouchableOpacity style={styles.removeBtn} onPress={() => removeImage(i)}>
-                        <Text style={styles.removeText}>✕</Text>
-                      </TouchableOpacity>
-                    </View>
-                  ))}
-                </ScrollView>
-                <TouchableOpacity style={styles.parseBtn} onPress={parseBooking} activeOpacity={0.8}>
-                  <Text style={styles.parseBtnText}>
-                    🔍 Parse {images.length} screenshot{images.length > 1 ? 's' : ''}
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.retakeBtn} onPress={() => setImages([])}>
-                  <Text style={styles.retakeText}>Choose different photos</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-
-            {!hasImages && (
-              <View style={styles.emailSection}>
-                <View style={styles.divider}>
-                  <View style={styles.dividerLine} />
-                  <Text style={styles.dividerText}>or</Text>
-                  <View style={styles.dividerLine} />
-                </View>
-                <View style={styles.emailCard}>
-                  <Text style={styles.emailIcon}>✉️</Text>
-                  <Text style={styles.emailLabel}>Forward your email</Text>
-                  <Text style={styles.emailSub}>
-                    Send your booking confirmation to{'\n'}
-                    <Text style={styles.emailAddr}>bookings@grilloparlante.app</Text>
-                  </Text>
-                </View>
-              </View>
+          <Animated.View style={[styles.pickArea, { opacity: contentOp }]}>
+            <Text style={styles.pickTitle}>Upload your booking screenshot</Text>
+            <Text style={styles.pickSub}>I'll read the details and create a custom itinerary</Text>
+            <TouchableOpacity style={styles.pickBtn} onPress={pick}>
+              <Text style={styles.pickBtnText}>📸 Choose image</Text>
+            </TouchableOpacity>
+            {image && (
+              <Image source={{ uri: image }} style={[styles.preview, { maxHeight: maxH }]} resizeMode="contain" />
             )}
           </Animated.View>
         )}
 
-        {/* ─── PHASE 1: Parsing ─── */}
         {phase === 1 && (
-          <View style={styles.parseContainer}>
-            <Animated.View style={[styles.parseCard, { opacity: parseOp, transform: [{ scale: parseScale }] }]}>
-              <Text style={styles.parseEmoji}>🔍</Text>
-              <Text style={styles.parseTitle}>Grillo is reading your booking</Text>
-              <View style={styles.parseSteps}>
-                {['📸 Loading OCR...', '🔍 Scanning...', '📝 Recognizing...', '🧠 Extracting...', '📍 Finding...', '✅ Building...'].map((s, i) => (
-                  <Animated.Text key={i} style={[styles.parseStepText, {
-                    opacity: step >= i ? 1 : 0.2,
-                    transform: [{ translateX: step >= i ? 0 : -8 }],
-                  }]}>
-                    {s}
-                  </Animated.Text>
-                ))}
-              </View>
-            </Animated.View>
-          </View>
-        )}
-
-        {/* ─── PHASE 2+3: Cinematic texts + result card ─── */}
-        {(phase === 2 || phase === 3) && parsed && (
-          <View style={styles.resultWrap}>
-            <View style={styles.textsContainer}>
-              {personalTexts.map((t, i) => (
-                <Animated.Text key={i} style={[styles.personalText, {
-                  opacity: textIdx === i ? textBlend : 0,
-                  transform: [{ translateY: textIdx === i ? 0 : 12 }, { scale: textIdx === i ? 1 : 0.97 }],
+          <Animated.View style={[styles.parseCard, { opacity: parseOp, transform: [{ scale: parseScale }] }]}>
+            <Text style={styles.parseEmoji}>🔍</Text>
+            <Text style={styles.parseTitle}>Reading your booking...</Text>
+            <View style={styles.parseSteps}>
+              {['📸 Loading...', '🔍 Scanning...', '📝 Reading...', '🧠 Parsing...', '📍 Found!', '✅ Done!'].map((s, i) => (
+                <Animated.Text key={i} style={[styles.parseStepText, {
+                  opacity: step >= i ? 1 : 0.2,
+                  transform: [{ translateX: step >= i ? 0 : -10 }],
                 }]}>
-                  {t}
+                  {step >= i ? '✓ ' : '○ '}{s}
                 </Animated.Text>
               ))}
             </View>
+          </Animated.View>
+        )}
 
-            {phase === 3 && (
-              <Animated.View style={[styles.resultCard, { opacity: resultOp, transform: [{ translateY: resultSlide }] }]}>
-                <Text style={styles.resultBadge}>✅ Booking detected</Text>
-                {parsed._ocrFailed && !showManualForm && (
-                  <Text style={styles.fallbackWarning}>
-                    ⚠️ Could not read the screenshot text.
-                  </Text>
-                )}
-                {parsed._ocrFailed && !showManualForm && (
-                  <TouchableOpacity style={styles.manualBtn} onPress={() => setShowManualForm(true)}>
-                    <Text style={styles.manualBtnText}>✏️ Enter details manually</Text>
-                  </TouchableOpacity>
-                )}
-                {showManualForm ? (
-                  <View style={styles.manualForm}>
-                    <Text style={styles.manualTitle}>Enter your booking details</Text>
-                    <TextInput style={styles.manualInput} placeholder="Destination (e.g. Split, Croatia)" placeholderTextColor="rgba(255,255,255,0.3)"
-                      value={manualData.destination} onChangeText={t => setManualData(d => ({...d, destination: t}))} />
-                    <TextInput style={styles.manualInput} placeholder="Check-in date" placeholderTextColor="rgba(255,255,255,0.3)"
-                      value={manualData.checkIn} onChangeText={t => setManualData(d => ({...d, checkIn: t}))} />
-                    <TextInput style={styles.manualInput} placeholder="Check-out date" placeholderTextColor="rgba(255,255,255,0.3)"
-                      value={manualData.checkOut} onChangeText={t => setManualData(d => ({...d, checkOut: t}))} />
-                    <TextInput style={styles.manualInput} placeholder="Hotel / Property name" placeholderTextColor="rgba(255,255,255,0.3)"
-                      value={manualData.hotel} onChangeText={t => setManualData(d => ({...d, hotel: t}))} />
-                    <TouchableOpacity style={styles.confirmBtn} onPress={() => {
-                      setParsed({ ...parsed, destination: manualData.destination, checkIn: manualData.checkIn, checkOut: manualData.checkOut, hotel: manualData.hotel });
-                      setShowManualForm(false);
-                    }}>
-                      <Text style={styles.confirmText}>✅ Confirm</Text>
-                    </TouchableOpacity>
-                  </View>
-                ) : (
-                <React.Fragment>
-                <View style={styles.resultRow}>
-                  <Text style={styles.resultLabel}>📍 Destination</Text>
-                  <Text style={styles.resultValue}>{parsed.destination}</Text>
-                </View>
-                <View style={styles.resultDivider} />
-                <View style={styles.resultRow}>
-                  <Text style={styles.resultLabel}>📅 Check-in</Text>
-                  <Text style={styles.resultValue}>{parsed.checkIn}</Text>
-                </View>
-                <View style={styles.resultDivider} />
-                <View style={styles.resultRow}>
-                  <Text style={styles.resultLabel}>📅 Check-out</Text>
-                  <Text style={styles.resultValue}>{parsed.checkOut}</Text>
-                </View>
-                <View style={styles.resultDivider} />
-                <View style={styles.resultRow}>
-                  <Text style={styles.resultLabel}>🏨 Accommodation</Text>
-                  <Text style={styles.resultValue}>{parsed.hotel}</Text>
-                </View>
-                <View style={styles.resultDivider} />
-                <View style={styles.resultRow}>
-                  <Text style={styles.resultLabel}>👥 Guests</Text>
-                  <Text style={styles.resultValue}>{parsed.guests}</Text>
-                </View>
-                <View style={styles.resultDivider} />
-                <View style={styles.resultRow}>
-                  <Text style={styles.resultLabel}>🔑 Confirmation</Text>
-                  <Text style={styles.resultValue}>{parsed.confirmation}</Text>
-                </View>
-                <TouchableOpacity style={styles.confirmBtn} onPress={confirmBooking} activeOpacity={0.8}>
-                  <Text style={styles.confirmText}>✨ Create my trip</Text>
+        {phase === 2 && parsed && (
+          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 40 }}>
+            {/* Cinematic texts */}
+            <Animated.View style={[styles.textsContainer, { opacity: resultOp }]}>
+              {textIdx >= 0 && (
+                <Animated.Text key={textIdx} style={[styles.cinematicText, { opacity: textBlend }]}>
+                  {buildTexts(parsed)[textIdx] || ''}
+                </Animated.Text>
+              )}
+            </Animated.View>
+
+            {/* Result card */}
+            <Animated.View style={[styles.resultCard, { opacity: resultOp, transform: [{ translateY: resultSlide }] }]}>
+              <Text style={styles.resultBadge}>
+                {parsed._isFallback ? '⚠️ Could not read screenshot' : '✅ Booking detected'}
+              </Text>
+
+              {parsed._isFallback && !manualOpen && (
+                <TouchableOpacity style={styles.manualBtn} onPress={() => setManualOpen(true)}>
+                  <Text style={styles.manualBtnText}>✏️ Enter details manually</Text>
                 </TouchableOpacity>
-                  </React.Fragment>
-                )}
-              </Animated.View>
-            )}
-          </View>
+              )}
+
+              {manualOpen ? (
+                <View style={styles.manualForm}>
+                  <Text style={styles.manualTitle}>Enter your booking</Text>
+                  <TextInput style={styles.input} placeholder="Destination" placeholderTextColor="rgba(255,255,255,0.3)"
+                    value={manual.destination} onChangeText={t => setManual(m => ({...m, destination: t}))} />
+                  <TextInput style={styles.input} placeholder="Check-in date" placeholderTextColor="rgba(255,255,255,0.3)"
+                    value={manual.checkIn} onChangeText={t => setManual(m => ({...m, checkIn: t}))} />
+                  <TextInput style={styles.input} placeholder="Check-out date" placeholderTextColor="rgba(255,255,255,0.3)"
+                    value={manual.checkOut} onChangeText={t => setManual(m => ({...m, checkOut: t}))} />
+                  <TextInput style={styles.input} placeholder="Hotel name" placeholderTextColor="rgba(255,255,255,0.3)"
+                    value={manual.hotel} onChangeText={t => setManual(m => ({...m, hotel: t}))} />
+                  <TouchableOpacity style={styles.confirmBtn} onPress={applyManual}>
+                    <Text style={styles.confirmText}>✅ Confirm</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <>
+                  <View style={styles.row}><Text style={styles.label}>📍 Destination</Text><Text style={styles.value}>{parsed.destination}</Text></View>
+                  <View style={styles.divider} />
+                  <View style={styles.row}><Text style={styles.label}>📅 Check-in</Text><Text style={styles.value}>{parsed.checkIn}</Text></View>
+                  <View style={styles.divider} />
+                  <View style={styles.row}><Text style={styles.label}>📅 Check-out</Text><Text style={styles.value}>{parsed.checkOut}</Text></View>
+                  <View style={styles.divider} />
+                  <View style={styles.row}><Text style={styles.label}>🏨 Accommodation</Text><Text style={styles.value}>{parsed.hotel}</Text></View>
+                  <View style={styles.divider} />
+                  <View style={styles.row}><Text style={styles.label}>👥 Guests</Text><Text style={styles.value}>{parsed.guests || '—'}</Text></View>
+                  <View style={styles.divider} />
+                  <View style={styles.row}><Text style={styles.label}>🔑 Confirmation</Text><Text style={styles.value}>{parsed.confirmation || '—'}</Text></View>
+
+                  <TouchableOpacity style={styles.confirmBtn} onPress={confirmBooking} activeOpacity={0.8}>
+                    <Text style={styles.confirmText}>✨ Create my trip</Text>
+                  </TouchableOpacity>
+                </>
+              )}
+            </Animated.View>
+          </ScrollView>
         )}
 
         <View style={{ height: 32 }} />
@@ -441,109 +301,45 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#0a0a0a' },
-
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 20, paddingVertical: 16,
   },
-  backBtn: { padding: 4 },
-  backText: { fontSize: 15, fontWeight: '600', color: 'rgba(232,168,50,0.8)' },
-  brand: { fontSize: 16, fontWeight: '700', color: 'rgba(255,255,255,0.3)', letterSpacing: -0.3 },
+  headerBtn: { fontSize: 15, fontWeight: '600', color: 'rgba(232,168,50,0.9)' },
+  headerTitle: { fontSize: 16, fontWeight: '700', color: 'rgba(255,255,255,0.5)' },
 
-  heroSection: { paddingHorizontal: 20, paddingTop: 20, paddingBottom: 28 },
-  mainLabel: { fontSize: 28, fontWeight: '800', color: '#fff', letterSpacing: -0.5, marginBottom: 8 },
-  subLabel: { fontSize: 15, fontWeight: '400', color: 'rgba(255,255,255,0.4)', lineHeight: 22 },
+  pickArea: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 40 },
+  pickTitle: { fontSize: 22, fontWeight: '700', color: '#fff', textAlign: 'center', marginBottom: 8 },
+  pickSub: { fontSize: 14, color: 'rgba(255,255,255,0.5)', textAlign: 'center', marginBottom: 32, lineHeight: 20 },
+  pickBtn: {
+    backgroundColor: 'rgba(232,168,50,0.15)', borderRadius: 14, paddingVertical: 16, paddingHorizontal: 32,
+    borderWidth: 1, borderColor: 'rgba(232,168,50,0.3)',
+  },
+  pickBtnText: { fontSize: 16, fontWeight: '700', color: 'rgba(232,168,50,0.9)' },
+  preview: { width: '100%', borderRadius: 12, marginTop: 24, backgroundColor: 'rgba(255,255,255,0.05)' },
 
-  pickerSection: { flexDirection: 'row', gap: 10, paddingHorizontal: 20, marginBottom: 24 },
-  pickerBtn: {
-    flex: 1, backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 20, padding: 20,
-    alignItems: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
-  },
-  pickerIcon: { fontSize: 32, marginBottom: 8 },
-  pickerLabel: { fontSize: 15, fontWeight: '700', color: '#fff', marginBottom: 2 },
-  pickerDesc: { fontSize: 11, color: 'rgba(255,255,255,0.35)', textAlign: 'center', lineHeight: 15 },
-
-  demoBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 12,
-    backgroundColor: 'rgba(232,168,50,0.08)', borderRadius: 16, padding: 16, marginHorizontal: 20, marginBottom: 24,
-    borderWidth: 1, borderColor: 'rgba(232,168,50,0.2)',
-  },
-  demoIcon: { fontSize: 28 },
-  demoLabel: { fontSize: 14, fontWeight: '700', color: 'rgba(232,168,50,0.9)' },
-  demoDesc: { fontSize: 11, color: 'rgba(255,255,255,0.35)', marginTop: 1 },
-  demoArrow: { fontSize: 18, color: 'rgba(232,168,50,0.5)', marginLeft: 'auto' },
-
-  previewSection: { paddingHorizontal: 20 },
-  thumbWrap: { position: 'relative' },
-  thumb: { width: 80, height: 110, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.06)' },
-  removeBtn: {
-    position: 'absolute', top: -6, right: -6,
-    width: 20, height: 20, borderRadius: 10,
-    backgroundColor: '#c2553a', alignItems: 'center', justifyContent: 'center',
-  },
-  removeText: { fontSize: 10, fontWeight: '700', color: '#fff' },
-  parseBtn: {
-    backgroundColor: 'rgba(232,168,50,0.9)', paddingVertical: 14, borderRadius: 14,
-    alignItems: 'center', marginTop: 16,
-  },
-  parseBtnText: { fontSize: 14, fontWeight: '700', color: '#0a0a0a' },
-  retakeBtn: { alignItems: 'center', marginTop: 12, padding: 8 },
-  retakeText: { fontSize: 12, color: 'rgba(232,168,50,0.5)', fontWeight: '500' },
-
-  parseContainer: {
-    flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 32, backgroundColor: '#0a0a0a',
-  },
   parseCard: {
-    backgroundColor: '#1a1a1a', borderRadius: 24, padding: 32,
-    alignItems: 'center', width: '100%', maxWidth: 320,
-    borderWidth: 1, borderColor: 'rgba(232,168,50,0.15)',
+    backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: 20, marginHorizontal: 24, marginTop: 40,
+    padding: 28, borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)',
   },
-  parseEmoji: { fontSize: 48, marginBottom: 12 },
-  parseTitle: { fontSize: 18, fontWeight: '700', color: '#fff', marginBottom: 24, textAlign: 'center' },
-  progressBar: {
-    width: '100%', height: 4, backgroundColor: 'rgba(232,168,50,0.15)',
-    borderRadius: 2, marginBottom: 8, overflow: 'hidden',
-  },
-  progressFill: { height: 4, backgroundColor: 'rgba(232,168,50,0.8)', borderRadius: 2 },
-  progressText: { fontSize: 11, color: 'rgba(232,168,50,0.6)', marginBottom: 12 },
-  parseSteps: { alignItems: 'flex-start', width: '100%', gap: 8 },
-  parseStepText: { fontSize: 13, color: 'rgba(255,255,255,0.7)', fontWeight: '500' },
+  parseEmoji: { fontSize: 40, textAlign: 'center', marginBottom: 12 },
+  parseTitle: { fontSize: 17, fontWeight: '600', color: '#fff', textAlign: 'center', marginBottom: 24 },
+  parseSteps: { gap: 8 },
+  parseStepText: { fontSize: 13, color: 'rgba(255,255,255,0.7)', paddingVertical: 3 },
 
-  emailSection: { paddingHorizontal: 20, marginTop: 8 },
-  divider: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 16 },
-  dividerLine: { flex: 1, height: 1, backgroundColor: 'rgba(255,255,255,0.08)' },
-  dividerText: { fontSize: 12, color: 'rgba(255,255,255,0.25)', fontWeight: '500' },
-  emailCard: {
-    backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: 16, padding: 20,
-    alignItems: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)',
-  },
-  emailIcon: { fontSize: 28, marginBottom: 8 },
-  emailLabel: { fontSize: 15, fontWeight: '700', color: '#fff', marginBottom: 6 },
-  emailSub: { fontSize: 12, color: 'rgba(255,255,255,0.35)', textAlign: 'center', lineHeight: 18 },
-  emailAddr: { fontSize: 12, color: 'rgba(232,168,50,0.7)', fontWeight: '600' },
+  textsContainer: { paddingHorizontal: 24, paddingTop: 40, minHeight: 80, justifyContent: 'center' },
+  cinematicText: { fontSize: 18, fontWeight: '600', color: '#fff', textAlign: 'center', lineHeight: 26 },
 
-  resultWrap: { flex: 1, paddingHorizontal: 24, paddingTop: 20 },
-  textsContainer: { height: 120, justifyContent: 'center', alignItems: 'center', marginBottom: 20 },
-  personalText: {
-    position: 'absolute', fontSize: 18, fontWeight: '600', color: '#fff',
-    textAlign: 'center', lineHeight: 26, maxWidth: 340,
-  },
   resultCard: {
-    backgroundColor: '#1a1a1a', borderRadius: 24, padding: 24,
-    borderWidth: 1, borderColor: 'rgba(232,168,50,0.12)',
+    backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: 20, marginHorizontal: 24, marginTop: 16,
+    padding: 20, borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)',
   },
-  resultBadge: {
-    fontSize: 14, fontWeight: '700', color: '#4ade80', marginBottom: 16,
-    textAlign: 'center', letterSpacing: 0.5,
-  },
-  fallbackWarning: {
-    fontSize: 11, color: 'rgba(232,168,50,0.8)', textAlign: 'center',
-    marginBottom: 12, lineHeight: 16,
-  },
-  resultRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 10 },
-  resultDivider: { height: 1, backgroundColor: 'rgba(255,255,255,0.05)' },
-  resultLabel: { fontSize: 13, color: 'rgba(255,255,255,0.45)', fontWeight: '500' },
-  resultValue: { fontSize: 13, color: '#fff', fontWeight: '600', maxWidth: '55%', textAlign: 'right' },
+  resultBadge: { fontSize: 12, fontWeight: '700', color: '#4cd964', marginBottom: 16, textTransform: 'uppercase', letterSpacing: 0.5 },
+  row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 10 },
+  label: { fontSize: 13, color: 'rgba(255,255,255,0.4)', fontWeight: '500' },
+  value: { fontSize: 14, color: '#fff', fontWeight: '600', maxWidth: '55%', textAlign: 'right' },
+  divider: { height: 1, backgroundColor: 'rgba(255,255,255,0.06)' },
+
   confirmBtn: {
     backgroundColor: 'rgba(232,168,50,0.9)', borderRadius: 14, paddingVertical: 14,
     alignItems: 'center', marginTop: 20,
@@ -557,7 +353,7 @@ const styles = StyleSheet.create({
   manualBtnText: { fontSize: 13, fontWeight: '600', color: 'rgba(232,168,50,0.9)' },
   manualForm: { width: '100%' },
   manualTitle: { fontSize: 15, fontWeight: '700', color: '#fff', marginBottom: 12, textAlign: 'center' },
-  manualInput: {
+  input: {
     backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 10, paddingVertical: 12, paddingHorizontal: 14,
     color: '#fff', fontSize: 14, marginBottom: 8, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
   },
