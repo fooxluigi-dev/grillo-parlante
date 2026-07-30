@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
-  Image, Platform, SafeAreaView, Animated, Dimensions
+  Image, Platform, SafeAreaView, Animated, Dimensions, TextInput
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { Colors } from '../theme/colors';
@@ -18,6 +18,8 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
   const [step, setStep] = useState(-1);
   const [textIdx, setTextIdx] = useState(-1);
   const [ocrProgress, setOcrProgress] = useState(0);
+  const [showManualForm, setShowManualForm] = useState(false);
+  const [manualData, setManualData] = useState({ destination: '', checkIn: '', checkOut: '', hotel: '' });
 
   // Animations
   const contentOp = useRef(new Animated.Value(0)).current;
@@ -207,6 +209,24 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
         _isDemo: images.length === 0,
         _ocrFailed: images.length > 0,
       };
+    }
+
+    // NEW: If we have images and OCR failed, try server-side as fallback
+    if (images.length > 0 && resultData._ocrFailed) {
+      try {
+        const serverResponse = await apiCall(API_ENDPOINTS.PARSE_BOOKING, {
+          method: 'POST',
+          body: JSON.stringify({ images }),
+        });
+        if (serverResponse.ok) {
+          const serverData = await serverResponse.json();
+          if (!serverData._ocrFailed && serverData.destination && serverData.destination !== 'Unknown') {
+            resultData = { ...serverData, _isFallback: false, _isDemo: false };
+          }
+        }
+      } catch (e) {
+        console.error('Server OCR fallback also failed:', e);
+      }
     }
 
     setParsed(resultData);
@@ -404,11 +424,36 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
             {phase === 3 && (
               <Animated.View style={[styles.resultCard, { opacity: resultOp, transform: [{ translateY: resultSlide }] }]}>
                 <Text style={styles.resultBadge}>✅ Booking detected</Text>
-                {parsed._ocrFailed && (
+                {parsed._ocrFailed && !showManualForm && (
                   <Text style={styles.fallbackWarning}>
-                    ⚠️ Could not read the screenshot text.{'\n'}You can still create a trip manually.
+                    ⚠️ Could not read the screenshot text.
                   </Text>
                 )}
+                {parsed._ocrFailed && !showManualForm && (
+                  <TouchableOpacity style={styles.manualBtn} onPress={() => setShowManualForm(true)}>
+                    <Text style={styles.manualBtnText}>✏️ Enter details manually</Text>
+                  </TouchableOpacity>
+                )}
+                {showManualForm ? (
+                  <View style={styles.manualForm}>
+                    <Text style={styles.manualTitle}>Enter your booking details</Text>
+                    <TextInput style={styles.manualInput} placeholder="Destination (e.g. Split, Croatia)" placeholderTextColor="rgba(255,255,255,0.3)"
+                      value={manualData.destination} onChangeText={t => setManualData(d => ({...d, destination: t}))} />
+                    <TextInput style={styles.manualInput} placeholder="Check-in date" placeholderTextColor="rgba(255,255,255,0.3)"
+                      value={manualData.checkIn} onChangeText={t => setManualData(d => ({...d, checkIn: t}))} />
+                    <TextInput style={styles.manualInput} placeholder="Check-out date" placeholderTextColor="rgba(255,255,255,0.3)"
+                      value={manualData.checkOut} onChangeText={t => setManualData(d => ({...d, checkOut: t}))} />
+                    <TextInput style={styles.manualInput} placeholder="Hotel / Property name" placeholderTextColor="rgba(255,255,255,0.3)"
+                      value={manualData.hotel} onChangeText={t => setManualData(d => ({...d, hotel: t}))} />
+                    <TouchableOpacity style={styles.confirmBtn} onPress={() => {
+                      setParsed({ ...parsed, destination: manualData.destination, checkIn: manualData.checkIn, checkOut: manualData.checkOut, hotel: manualData.hotel });
+                      setShowManualForm(false);
+                    }}>
+                      <Text style={styles.confirmText}>✅ Confirm</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                <React.Fragment>
                 <View style={styles.resultRow}>
                   <Text style={styles.resultLabel}>📍 Destination</Text>
                   <Text style={styles.resultValue}>{parsed.destination}</Text>
@@ -441,6 +486,8 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
                 <TouchableOpacity style={styles.confirmBtn} onPress={confirmBooking} activeOpacity={0.8}>
                   <Text style={styles.confirmText}>✨ Create my trip</Text>
                 </TouchableOpacity>
+                  </React.Fragment>
+                )}
               </Animated.View>
             )}
           </View>
@@ -562,4 +609,16 @@ const styles = StyleSheet.create({
     alignItems: 'center', marginTop: 20,
   },
   confirmText: { fontSize: 15, fontWeight: '800', color: '#0a0a0a' },
+
+  manualBtn: {
+    backgroundColor: 'rgba(232,168,50,0.15)', borderRadius: 12, paddingVertical: 10,
+    alignItems: 'center', marginBottom: 16, borderWidth: 1, borderColor: 'rgba(232,168,50,0.25)',
+  },
+  manualBtnText: { fontSize: 13, fontWeight: '600', color: 'rgba(232,168,50,0.9)' },
+  manualForm: { width: '100%' },
+  manualTitle: { fontSize: 15, fontWeight: '700', color: '#fff', marginBottom: 12, textAlign: 'center' },
+  manualInput: {
+    backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 10, paddingVertical: 12, paddingHorizontal: 14,
+    color: '#fff', fontSize: 14, marginBottom: 8, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
+  },
 });
