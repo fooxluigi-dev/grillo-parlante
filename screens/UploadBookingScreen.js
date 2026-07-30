@@ -32,6 +32,19 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
   }, []);
 
   // ─── Pick image (web + native) ───
+  const resizeImage = (base64, maxW=1200) => new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => {
+      let {width, height} = img;
+      if (width > maxW) { height = height * maxW / width; width = maxW; }
+      const c = document.createElement('canvas');
+      c.width = width; c.height = height;
+      c.getContext('2d').drawImage(img, 0, 0, width, height);
+      resolve(c.toDataURL('image/jpeg', 0.8));
+    };
+    img.src = base64;
+  });
+
   const pick = async () => {
     let dataUrl = '';
 
@@ -49,7 +62,6 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
       const file = files[0];
       console.log('File:', file.name, file.type, (file.size / 1024).toFixed(1) + 'KB');
 
-      // Use Blob-style upload (smaller than base64 — no 33% overhead)
       dataUrl = await new Promise((r) => {
         const reader = new FileReader();
         reader.onload = () => r(reader.result);
@@ -63,8 +75,10 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
       dataUrl = `data:image/jpeg;base64,${result.assets[0].base64}`;
     }
 
-    setImage(dataUrl);
-    parseImage(dataUrl);
+    // Resize to 1200px before sending
+    const resized = Platform.OS === 'web' ? await resizeImage(dataUrl, 1200) : dataUrl;
+    setImage(resized);
+    parseImage(resized);
   };
 
   // ─── Parse: send image → OCR → DeepSeek → show result ───
