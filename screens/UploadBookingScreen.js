@@ -47,11 +47,14 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
       if (!files.length) return;
 
       const file = files[0];
-      // Log file info for debugging
-      console.log('Picked file:', file.name, file.type, (file.size / 1024).toFixed(1) + 'KB');
+      console.log('File:', file.name, file.type, (file.size / 1024).toFixed(1) + 'KB');
 
-      // Read as blob, resize client-side, get data URL
-      dataUrl = await readAndResize(file);
+      // Use Blob-style upload (smaller than base64 — no 33% overhead)
+      dataUrl = await new Promise((r) => {
+        const reader = new FileReader();
+        reader.onload = () => r(reader.result);
+        reader.readAsDataURL(file);
+      });
     } else {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ['images'], quality: 0.5, base64: true,
@@ -63,43 +66,6 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
     setImage(dataUrl);
     parseImage(dataUrl);
   };
-
-  // ─── Read a File, resize via canvas, return JPEG data URL ───
-  const readAndResize = (file) => new Promise((resolve) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const raw = reader.result;
-      // If format is not supported for canvas, send as-is
-      const isSupported = raw.startsWith('data:image/png;') || raw.startsWith('data:image/jpeg;') || raw.startsWith('data:image/jpg;') || raw.startsWith('data:image/gif;') || raw.startsWith('data:image/webp;');
-      if (!isSupported) {
-        console.log('Unsupported format for resize, sending raw:', raw.slice(0, 30));
-        return resolve(raw);
-      }
-      resize(raw).then(resolve);
-    };
-    reader.readAsDataURL(file);
-  });
-
-  // ─── Client-side resize (web only) ───
-  const resize = (dataUrl) => new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => {
-      let { width, height } = img;
-      const maxDim = 1200;
-      if (width > maxDim || height > maxDim) {
-        const ratio = Math.min(maxDim / width, maxDim / height);
-        width = Math.round(width * ratio);
-        height = Math.round(height * ratio);
-      }
-      const canvas = document.createElement('canvas');
-      canvas.width = width;
-      canvas.height = height;
-      canvas.getContext('2d').drawImage(img, 0, 0, width, height);
-      resolve(canvas.toDataURL('image/jpeg', 0.7));
-    };
-    img.onerror = () => resolve(dataUrl);
-    img.src = dataUrl;
-  });
 
   // ─── Parse: send image → OCR → DeepSeek → show result ───
   const parseImage = async (dataUrl) => {
