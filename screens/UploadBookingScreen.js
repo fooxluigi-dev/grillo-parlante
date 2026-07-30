@@ -5,7 +5,6 @@ import {
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { Colors } from '../theme/colors';
-import { apiCall, API_ENDPOINTS } from '../utils/api';
 
 const { width: W } = Dimensions.get('window');
 
@@ -176,12 +175,14 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
 
         // Send image to server-side OCR (OCR.space + DeepSeek)
         setStep(1);
-        const response = await apiCall(API_ENDPOINTS.PARSE_BOOKING, {
+        const response = await fetch('https://gp-landing-rho.vercel.app/api/parse-booking', {
           method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ images: [images[0]] }),
         });
         if (response.ok) {
           const data = await response.json();
+          console.log('API response:', JSON.stringify(data).slice(0, 300));
           if (data && data.destination && data.destination !== 'Unknown') {
             resultData = { ...data, _isFallback: false, _isDemo: false };
             setStep(5);
