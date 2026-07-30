@@ -1,15 +1,18 @@
 {
   "expo": {
     "name": "grillo-app",
-    "slug": "grillo-app",
+    "slug": "grillo-parlante-",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.grilloparlante.app",
+      "developmentTeam": "679J849WY5"
     },
     "android": {
+      "package": "com.grilloparlante.app",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -19,6 +22,23 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-status-bar",
+      "expo-secure-store",
+      "expo-image-picker"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "48176d4e-3ece-4731-bfdc-4684c8c178d9"
+      }
+    },
+    "owner": "cacao2828",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/48176d4e-3ece-4731-bfdc-4684c8c178d9"
     }
   }
 }
