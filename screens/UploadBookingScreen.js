@@ -84,7 +84,17 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
   // ─── Build personal texts from parsed data ───
   const buildPersonalTexts = (data) => {
     const texts = [];
-    if (data?.destination && data.destination !== 'your destination') {
+    // Show generic loading/reading texts when data is fallback
+    if (data?._isFallback) {
+      texts.push('👀 Let me look at your booking...');
+      texts.push('Reading the details on your screenshot...');
+      texts.push('Almost there! Processing the info...');
+      texts.push('I can see travel plans forming... ✈️');
+      texts.push('Let me put together something special for you... ✨');
+      texts.push("Just give me a moment... 🦗");
+      return texts;
+    }
+    if (data?.destination && data.destination !== 'your destination' && data.destination !== 'Unknown') {
       texts.push(`I can see you're heading to ${data.destination}! 🏖️`);
     }
     if (data?.hotel && data.hotel !== '—') {
@@ -132,15 +142,15 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
     let apiDone = false;
     let apiResult = null;
     const fallback = {
-      destination: 'Split, Croatia',
-      checkIn: 'Aug 22',
-      checkOut: 'Aug 28',
-      hotel: 'Airbnb · Old Town',
-      confirmation: 'SW-2K48-7M3',
-      guests: 'Luigi Rossi + 2',
+      destination: 'your destination',
+      checkIn: '—',
+      checkOut: '—',
+      hotel: '—',
+      confirmation: '—',
+      guests: '—',
       pages: images.length || 1,
-      _isDemo: images.length === 0, // explicit flag: true only if no image was uploaded
-      _isFallback: true, // true when API hasn't returned yet or failed
+      _isDemo: images.length === 0,
+      _isFallback: true,
     };
 
     // Phase ref to avoid stale closures
@@ -365,7 +375,7 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
                 <Text style={styles.resultBadge}>✅ Booking detected</Text>
                 {parsed._isFallback && images.length > 0 && (
                   <Text style={styles.fallbackWarning}>
-                    ⚠️ Could not read your screenshot. Showing sample data while we retry...
+                    ⏳ Reading your screenshot... this may take a moment.
                   </Text>
                 )}
                 {parsed._isDemo && (
