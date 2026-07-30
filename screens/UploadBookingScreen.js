@@ -16,7 +16,6 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
   const [phase, setPhase] = useState(0); // 0=picker, 1=parsing, 2=texts, 3=results+card
   const [step, setStep] = useState(-1);
   const [textIdx, setTextIdx] = useState(-1);
-  const [ocrProgress, setOcrProgress] = useState(0);
   const [showManualForm, setShowManualForm] = useState(false);
 
   // Animations
@@ -60,7 +59,36 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
       const base64Images = await Promise.all(files.map((file) => {
         return new Promise((resolve) => {
           const reader = new FileReader();
-          reader.onload = () => resolve(reader.result);
+          reader.onload = () => {
+            // Auto-resize large images on web to stay within Vercel limits
+            const dataUrl = reader.result;
+            if (typeof document !== 'undefined') {
+              try {
+                const img = new Image();
+                img.onload = () => {
+                  let { width, height } = img;
+                  const maxDim = 1200;
+                  if (width > maxDim || height > maxDim) {
+                    const ratio = Math.min(maxDim / width, maxDim / height);
+                    width = Math.round(width * ratio);
+                    height = Math.round(height * ratio);
+                  }
+                  const canvas = document.createElement('canvas');
+                  canvas.width = width;
+                  canvas.height = height;
+                  const ctx = canvas.getContext('2d');
+                  ctx.drawImage(img, 0, 0, width, height);
+                  resolve(canvas.toDataURL('image/jpeg', 0.7));
+                };
+                img.onerror = () => resolve(dataUrl);
+                img.src = dataUrl;
+              } catch (e) {
+                resolve(dataUrl);
+              }
+            } else {
+              resolve(dataUrl);
+            }
+          };
           reader.onerror = () => resolve('');
           reader.readAsDataURL(file);
         });
@@ -118,29 +146,6 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
     return texts;
   };
 
-  // ─── Client-side image resize ───
-  const resizeImageClientSide = (dataUrl, maxDim) => {
-    return new Promise((resolve) => {
-      const img = new Image();
-      img.onload = () => {
-        let { width, height } = img;
-        if (width > maxDim || height > maxDim) {
-          const ratio = Math.min(maxDim / width, maxDim / height);
-          width = Math.round(width * ratio);
-          height = Math.round(height * ratio);
-        }
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(img, 0, 0, width, height);
-        resolve(canvas.toDataURL('image/jpeg', 0.85));
-      };
-      img.onerror = () => resolve(dataUrl);
-      img.src = dataUrl;
-    });
-  };
-
   // ─── Parse the booking ───
   const parseBooking = async () => {
     setPhase(1);
@@ -169,17 +174,11 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
         const steps = ['📸 Reading...', '🔍 Scanning...', '📝 Recognizing...', '🧠 Extracting...', '📍 Finding...', '✅ Building...'];
         steps.forEach((_, i) => setTimeout(() => setStep(i), i * 1500 + 500));
 
-        // Resize image on client to avoid Vercel body size limits
-        let processedImage = images[0];
-        if (Platform.OS === 'web' && typeof document !== 'undefined') {
-          processedImage = await resizeImageClientSide(images[0], 800);
-        }
-
         // Send image to server-side OCR (OCR.space + DeepSeek)
         setStep(1);
         const response = await apiCall(API_ENDPOINTS.PARSE_BOOKING, {
           method: 'POST',
-          body: JSON.stringify({ images: [processedImage] }),
+          body: JSON.stringify({ images: [images[0]] }),
         });
         if (response.ok) {
           const data = await response.json();
