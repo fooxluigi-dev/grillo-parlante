@@ -6,6 +6,7 @@ import {
 import * as ImagePicker from 'expo-image-picker';
 import { Colors } from '../theme/colors';
 import { apiCall, API_ENDPOINTS } from '../utils/api';
+import * as Tesseract from 'tesseract.js';
 
 const { width: W } = Dimensions.get('window');
 
@@ -116,11 +117,9 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
     texts.push("I'll create the perfect itinerary, just give me a moment... 🦗");
     return texts;
   };
-
-  // ─── Tesseract OCR in browser (lazy loaded) ───
+  // ─── Tesseract OCR in browser ───
   const runOcrInBrowser = async (imageDataUrl, onProgress) => {
     try {
-      const Tesseract = await import('tesseract.js');
       const result = await Tesseract.recognize(imageDataUrl, 'eng+ita', {
         logger: (info) => {
           if (info.status === 'recognizing text') {
@@ -147,123 +146,120 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
       Animated.spring(parseScale, { toValue: 1, tension: 40, friction: 10, useNativeDriver: true }),
     ]).start();
 
-    // Parsing steps — animated independently of OCR
-    const steps = [
-      '📸 Loading OCR engine...',
-      '🔍 Scanning text...',
-      '📝 Recognizing characters...',
-      '🧠 Extracting info...',
-      '📍 Finding destination...',
-      '✅ Building your trip...',
-    ];
-    steps.forEach((_, i) => setTimeout(() => setStep(i), i * 1200 + 400));
+    // Show initial loading step
+    setStep(0);
 
     let extractedText = '';
+    let resultData = null;
 
+    // PHASE 1: OCR — run immediately, show progress
     if (images.length > 0) {
       try {
-        setTimeout(() => setStep(1), 1600);
+        setStep(1); // Scanning text
         extractedText = await runOcrInBrowser(images[0], (pct) => {
           setOcrProgress(pct);
-          if (pct > 20) setStep(2);
-          if (pct > 50) setStep(3);
-          if (pct > 75) setStep(4);
+          if (pct > 20) setStep(2);  // Recognizing
+          if (pct > 50) setStep(3);  // Extracting
+          if (pct > 75) setStep(4);  // Finding destination
         });
         if (extractedText) {
           console.log('OCR extracted:', extractedText.slice(0, 200));
-          setTimeout(() => setStep(5), 500);
+          setStep(5); // Building
         }
       } catch (ocrErr) {
         console.error('OCR failed:', ocrErr);
       }
     }
 
-    // After steps animation completes, show results
-    const showResults = async () => {
-      let resultData;
-
-      if (extractedText) {
-        // Send extracted TEXT (not image) to DeepSeek for structured parsing
-        try {
-          const response = await apiCall(API_ENDPOINTS.PARSE_BOOKING, {
-            method: 'POST',
-            body: JSON.stringify({
-              ocrText: extractedText,
-              _clientOcr: true,
-            }),
-          });
-          if (response.ok) {
-            const data = await response.json();
-            resultData = { ...data, _isFallback: false, _isDemo: false };
-          } else {
-            // DeepSeek unavailable — show raw OCR text
-            const firstLine = extractedText.split('\n')[0].trim() || 'Read from image';
-            resultData = {
-              destination: firstLine,
-              checkIn: '—', checkOut: '—', hotel: '—', confirmation: '—', guests: '—',
-              _rawOcr: extractedText.slice(0, 500),
-            };
-          }
-        } catch (apiErr) {
-          const firstLine = extractedText.split('\n')[0].trim() || 'Read from image';
-          resultData = {
-            destination: firstLine,
-            checkIn: '—', checkOut: '—', hotel: '—', confirmation: '—', guests: '—',
-            _rawOcr: extractedText.slice(0, 500),
-          };
+    // PHASE 2: Parse with DeepSeek if we got text
+    if (extractedText) {
+      try {
+        setStep(5);
+        const response = await apiCall(API_ENDPOINTS.PARSE_BOOKING, {
+          method: 'POST',
+          body: JSON.stringify({ ocrText: extractedText }),
+        });
+        if (response.ok) {
+          const data = await response.json();
+          resultData = { ...data, _isFallback: false, _isDemo: false };
         }
-      } else {
-        // No image or no OCR result
-        resultData = {
-          destination: images.length === 0 ? 'your destination' : 'Unknown',
-          checkIn: '—', checkOut: '—', hotel: '—', confirmation: '—', guests: '—',
-          pages: images.length || 1,
-          _isDemo: images.length === 0,
-          _ocrFailed: images.length > 0,
-        };
+      } catch (apiErr) {
+        console.error('DeepSeek parse error:', apiErr);
       }
+    }
 
-      setParsed(resultData);
-      setPhase(2);
+    // If we got OCR text but DeepSeek failed, show raw text
+    if (extractedText && !resultData) {
+      const firstLine = extractedText.split('\n')[0].trim() || 'Read from image';
+      resultData = {
+        destination: firstLine,
+        checkIn: '—', checkOut: '—', hotel: '—', confirmation: '—', guests: '—',
+        _rawOcr: extractedText.slice(0, 500),
+      };
+    }
 
-      // Transition animations
-      Animated.timing(parseOp, { toValue: 0, duration: 200, useNativeDriver: true }).start();
-      Animated.timing(resultOp, { toValue: 1, duration: 300, useNativeDriver: true }).start();
+    // Full fallback — no text extracted at all
+    if (!resultData) {
+      resultData = {
+        destination: images.length === 0 ? 'your destination' : 'Unknown',
+        checkIn: '—', checkOut: '—', hotel: '—', confirmation: '—', guests: '—',
+        pages: images.length || 1,
+        _isDemo: images.length === 0,
+        _ocrFailed: images.length > 0,
+      };
+    }
 
-      const texts = buildPersonalTexts(resultData);
-      setTextIdx(0);
-      textBlend.setValue(1);
+    setParsed(resultData);
 
-      if (texts.length > 1) {
-        for (let i = 1; i < texts.length; i++) {
-          setTimeout(() => {
-            setTextIdx(i);
-            textBlend.setValue(0);
-            Animated.timing(textBlend, { toValue: 1, duration: 600, useNativeDriver: true }).start();
-          }, i * 3000);
-        }
+    // PHASE 3: Run steps animation (now with real data)
+    const steps = [
+      '📸 Image loaded',
+      '🔍 Text scanned',
+      '📝 Info recognized',
+      '🧠 Data extracted',
+      '📍 Destination found',
+      '✅ Trip built',
+    ];
+
+    // Fade out parse view
+    Animated.timing(parseOp, { toValue: 0, duration: 200, useNativeDriver: true }).start();
+    Animated.timing(resultOp, { toValue: 1, duration: 300, useNativeDriver: true }).start();
+
+    // Show phase 2 (texts)
+    setPhase(2);
+
+    const texts = buildPersonalTexts(resultData);
+    setTextIdx(0);
+    textBlend.setValue(1);
+
+    // Queue subsequent texts
+    if (texts.length > 1) {
+      for (let i = 1; i < texts.length; i++) {
         setTimeout(() => {
-          setPhase(3);
-          Animated.parallel([
-            Animated.timing(resultOp, { toValue: 1, duration: 500, useNativeDriver: true }),
-            Animated.timing(resultSlide, { toValue: 0, duration: 400, useNativeDriver: true }),
-          ]).start();
-        }, texts.length * 3000 + 500);
-      } else {
-        setTimeout(() => {
-          setPhase(3);
-          Animated.parallel([
-            Animated.timing(resultOp, { toValue: 1, duration: 500, useNativeDriver: true }),
-            Animated.timing(resultSlide, { toValue: 0, duration: 400, useNativeDriver: true }),
-          ]).start();
-        }, 3000);
+          setTextIdx(i);
+          textBlend.setValue(0);
+          Animated.timing(textBlend, { toValue: 1, duration: 600, useNativeDriver: true }).start();
+        }, i * 3000);
       }
+      // Show result card after all texts
+      setTimeout(() => {
+        setPhase(3);
+        Animated.parallel([
+          Animated.timing(resultOp, { toValue: 1, duration: 500, useNativeDriver: true }),
+          Animated.timing(resultSlide, { toValue: 0, duration: 400, useNativeDriver: true }),
+        ]).start();
+      }, texts.length * 3000 + 500);
+    } else {
+      setTimeout(() => {
+        setPhase(3);
+        Animated.parallel([
+          Animated.timing(resultOp, { toValue: 1, duration: 500, useNativeDriver: true }),
+          Animated.timing(resultSlide, { toValue: 0, duration: 400, useNativeDriver: true }),
+        ]).start();
+      }, 3000);
+    }
 
-      setParsing(false);
-    };
-
-    // Wait for step animation then show results
-    setTimeout(showResults, steps.length * 1200 + 500);
+    setParsing(false);
   };
 
   const confirmBooking = () => {
