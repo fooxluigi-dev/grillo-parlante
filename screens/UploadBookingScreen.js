@@ -4,6 +4,7 @@ import {
   Image, Platform, SafeAreaView, Animated, Dimensions, TextInput
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
+import Tesseract from 'tesseract.js';
 
 const { width: W } = Dimensions.get('window');
 const API = 'https://gp-landing-rho.vercel.app/api/parse-booking';
@@ -99,11 +100,27 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
     steps.forEach((_, i) => setTimeout(() => setStep(i), i * 1500 + 400));
 
     let result = null;
+    let ocrText = '';
     try {
+      // Run Tesseract OCR client-side for maximum reliability
+      if (Platform.OS === 'web') {
+        const { data } = await Tesseract.recognize(dataUrl, 'eng', {
+          logger: (m) => {
+            if (m.status === 'recognizing text') setStep(m.progress > 0.7 ? 2 : 1);
+          }
+        });
+        ocrText = data?.text?.trim() || '';
+        if (ocrText) console.log(`Tesseract extracted ${ocrText.length} chars`);
+      }
+
+      // Send text + image to API
       const resp = await fetch(API, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ images: [dataUrl] }),
+        body: JSON.stringify({
+          images: [dataUrl],
+          ocrText: ocrText || undefined,
+        }),
       });
       if (resp.ok) {
         const j = await resp.json();
