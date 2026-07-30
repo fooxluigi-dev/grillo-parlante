@@ -9,7 +9,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.grilloparlante.app",
-      "developmentTeam": "679J849WY5"
+      "developmentTeam": "$EXPO_PUBLIC_IOS_TEAM_ID"
     },
     "android": {
       "package": "com.grilloparlante.app",

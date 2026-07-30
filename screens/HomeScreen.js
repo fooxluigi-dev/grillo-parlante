@@ -6,6 +6,7 @@ import { Colors } from '../theme/colors';
 import { AuthContext } from '../context/AuthContext';
 import { useNavigation } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { apiCall, API_ENDPOINTS } from '../utils/api';
 import AnimatedCard from '../components/AnimatedCard';
 import EmptyStateIllustration from '../components/EmptyStateIllustration';
 import UploadBookingScreen from './UploadBookingScreen';
@@ -180,9 +181,9 @@ export default function HomeScreen() {
     } else if (action === 'invite') {
       const text = 'Join me on Grillo — AI travel companion!';
 
-      if (navigator.share) {
+      if (typeof navigator !== 'undefined' && navigator.share) {
         navigator.share({ title: 'Grillo Travel', text }).catch(() => {});
-      } else if (navigator.clipboard) {
+      } else if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
         navigator.clipboard.writeText(text).then(() => {
           if (Platform.OS === 'web') {
             alert('Invite link copied! Share it with your friends.');
@@ -216,9 +217,8 @@ export default function HomeScreen() {
     const checkOut = booking?.checkOut || '';
 
     try {
-      const response = await fetch('https://gp-landing-rho.vercel.app/api/itinerary', {
+      const response = await apiCall(API_ENDPOINTS.ITINERARY, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           destination: dest,
           checkIn,

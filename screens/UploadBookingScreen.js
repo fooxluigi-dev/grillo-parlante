@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { Colors } from '../theme/colors';
+import { apiCall, API_ENDPOINTS } from '../utils/api';
 
 const { width: W } = Dimensions.get('window');
 
@@ -127,7 +128,7 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
     ];
     steps.forEach((_, i) => setTimeout(() => setStep(i), i * 800 + 400));
 
-    // Fallback data
+    // Fallback data — marked as DEMO so the UI can distinguish real vs fake
     let apiDone = false;
     let apiResult = null;
     const fallback = {
@@ -138,6 +139,8 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
       confirmation: 'SW-2K48-7M3',
       guests: 'Luigi Rossi + 2',
       pages: images.length || 1,
+      _isDemo: images.length === 0, // explicit flag: true only if no image was uploaded
+      _isFallback: true, // true when API hasn't returned yet or failed
     };
 
     // Phase ref to avoid stale closures
@@ -191,18 +194,18 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
         await new Promise(r => setTimeout(r, 2000));
         result = fallback;
       } else {
-        const response = await fetch('https://gp-landing-rho.vercel.app/api/parse-booking', {
+        const response = await apiCall(API_ENDPOINTS.PARSE_BOOKING, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ images }),
         });
         if (!response.ok) throw new Error('Parse failed');
         result = await response.json();
       }
+      // Update with real data even if results already showing
       apiDone = true;
       apiResult = result;
       if (currentPhaseRef.current >= 2) {
-        setParsed(result);
+        setParsed({ ...result, _isFallback: false, _isDemo: false });
         // Restart texts with real data
         const texts = buildPersonalTexts(result);
         if (texts.length > 0) {
@@ -360,6 +363,16 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
             {phase === 3 && (
               <Animated.View style={[styles.resultCard, { opacity: resultOp, transform: [{ translateY: resultSlide }] }]}>
                 <Text style={styles.resultBadge}>✅ Booking detected</Text>
+                {parsed._isFallback && images.length > 0 && (
+                  <Text style={styles.fallbackWarning}>
+                    ⚠️ Could not read your screenshot. Showing sample data while we retry...
+                  </Text>
+                )}
+                {parsed._isDemo && (
+                  <Text style={styles.fallbackWarning}>
+                    🦗 This is a demo — no screenshot was uploaded.
+                  </Text>
+                )}
                 <View style={styles.resultRow}>
                   <Text style={styles.resultLabel}>📍 Destination</Text>
                   <Text style={styles.resultValue}>{parsed.destination}</Text>
@@ -501,6 +514,10 @@ const styles = StyleSheet.create({
   resultBadge: {
     fontSize: 14, fontWeight: '700', color: '#4ade80', marginBottom: 16,
     textAlign: 'center', letterSpacing: 0.5,
+  },
+  fallbackWarning: {
+    fontSize: 11, color: 'rgba(232,168,50,0.8)', textAlign: 'center',
+    marginBottom: 12, lineHeight: 16,
   },
   resultRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 10 },
   resultDivider: { height: 1, backgroundColor: 'rgba(255,255,255,0.05)' },

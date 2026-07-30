@@ -1,7 +1,8 @@
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = 'https://yfjlcdvntjtukuakhtzs.supabase.co';
-const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlmamxjZHZudGp0dWt1YWtodHpzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ5MDQxOTIsImV4cCI6MjEwMDQ4MDE5Mn0.dJrhz9fhMSHIKGlk4vCZOGe0NFzxBU0toDZfEFnjkLE';
+// Use EXPO_PUBLIC_ env vars (Expo SDK 57 exposes these to client)
+const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || 'https://yfjlcdvntjtukuakhtzs.supabase.co';
+const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || 'eyJhbG...jkLE';
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
