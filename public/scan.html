@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Grillo — Scan Booking</title>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: #0a0a0a; color: #fff; min-height: 100vh;
+  display: flex; flex-direction: column;
+}
+header {
+  padding: 16px 20px; display: flex; align-items: center; gap: 8px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+header h1 { font-size: 16px; font-weight: 600; color: rgba(232,168,50,0.9); }
+.container { flex: 1; padding: 24px 20px; max-width: 500px; margin: 0 auto; width: 100%; }
+.btn {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  width: 100%; padding: 16px; border-radius: 14px; font-size: 16px; font-weight: 700;
+  border: none; cursor: pointer; transition: all 0.2s;
+}
+.btn-gold { background: rgba(232,168,50,0.15); color: rgba(232,168,50,0.9); border: 1px solid rgba(232,168,50,0.3); }
+.btn-gold:hover { background: rgba(232,168,50,0.25); }
+.btn-solid { background: rgba(232,168,50,0.9); color: #0a0a0a; }
+.btn-solid:hover { background: rgba(232,168,50,1); }
+.btn-solid:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-ghost { background: transparent; color: rgba(255,255,255,0.5); border: 1px solid rgba(255,255,255,0.1); }
+.hidden { display: none !important; }
+
+/* Upload area */
+#uploadArea {
+  text-align: center; padding: 60px 20px;
+  border: 2px dashed rgba(232,168,50,0.3); border-radius: 20px;
+  cursor: pointer; transition: all 0.3s;
+}
+#uploadArea:hover { border-color: rgba(232,168,50,0.6); background: rgba(232,168,50,0.05); }
+#uploadArea .icon { font-size: 48px; margin-bottom: 12px; }
+#uploadArea .title { font-size: 20px; font-weight: 700; margin-bottom: 8px; }
+#uploadArea .sub { font-size: 14px; color: rgba(255,255,255,0.4); }
+
+/* Preview */
+#preview { width: 100%; border-radius: 12px; margin: 16px 0; display: none; }
+
+/* Status */
+#status { text-align: center; padding: 20px 0; }
+#status .emoji { font-size: 40px; margin-bottom: 8px; }
+#status .text { font-size: 16px; color: rgba(255,255,255,0.8); }
+#status .subtext { font-size: 13px; color: rgba(255,255,255,0.4); margin-top: 4px; }
+.progress-bar {
+  width: 100%; height: 3px; background: rgba(255,255,255,0.1); border-radius: 2px;
+  margin: 16px 0; overflow: hidden;
+}
+.progress-bar .fill { height: 100%; background: rgba(232,168,50,0.9); border-radius: 2px; transition: width 0.3s; width: 0%; }
+
+/* Steps */
+#steps { margin: 16px 0; }
+.step { display: flex; align-items: center; gap: 10px; padding: 8px 0; font-size: 14px; color: rgba(255,255,255,0.3); }
+.step.done { color: #4cd964; }
+.step.active { color: #fff; }
+
+/* Result card */
+#result {
+  background: rgba(255,255,255,0.04); border-radius: 20px; padding: 20px;
+  border: 1px solid rgba(255,255,255,0.06); margin: 16px 0;
+}
+#result .badge { font-size: 12px; font-weight: 700; color: #4cd964; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; }
+#result .row { display: flex; justify-content: space-between; padding: 10px 0; }
+#result .row .label { font-size: 13px; color: rgba(255,255,255,0.4); }
+#result .row .value { font-size: 14px; font-weight: 600; text-align: right; max-width: 55%; }
+#result .divider { height: 1px; background: rgba(255,255,255,0.06); }
+
+/* Error */
+#error {
+  background: rgba(255,59,48,0.1); border: 1px solid rgba(255,59,48,0.3);
+  border-radius: 12px; padding: 16px; margin: 16px 0; text-align: center;
+  color: #ff3b30; font-size: 14px;
+}
+
+/* Itinerary section */
+.itinerary-day {
+  background: rgba(255,255,255,0.04); border-radius: 16px; padding: 16px; margin: 12px 0;
+  border: 1px solid rgba(255,255,255,0.06);
+}
+.itinerary-day .day-header { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.itinerary-day .day-header .icon { font-size: 24px; }
+.itinerary-day .day-header .title { font-size: 16px; font-weight: 700; }
+.itinerary-day .day-header .subtitle { font-size: 13px; color: rgba(255,255,255,0.5); }
+.itinerary-day .activity { display: flex; gap: 10px; padding: 8px 0; border-top: 1px solid rgba(255,255,255,0.04); }
+.itinerary-day .activity .time { font-size: 12px; color: rgba(232,168,50,0.7); min-width: 70px; font-weight: 600; }
+.itinerary-day .activity .desc { font-size: 13px; color: rgba(255,255,255,0.8); }
+.itinerary-day .activity .price { font-size: 12px; color: rgba(232,168,50,0.6); }
+
+#log { font-size: 11px; color: rgba(255,255,255,0.2); margin-top: 40px; padding: 12px; border-top: 1px solid rgba(255,255,255,0.05); white-space: pre-wrap; word-break: break-all; max-height: 200px; overflow-y: auto; display: none; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🦗 Grillo</h1>
+</header>
+
+<div class="container">
+  <!-- Upload -->
+  <div id="uploadArea" onclick="pickFile()">
+    <div class="icon">📸</div>
+    <div class="title">Upload your booking</div>
+    <div class="sub">Screenshot or photo of your confirmation</div>
+  </div>
+  <input id="fileInput" type="file" accept="image/*" style="display:none" onchange="onFile(event)">
+
+  <!-- Preview -->
+  <img id="preview">
+
+  <!-- Status -->
+  <div id="status" class="hidden">
+    <div class="emoji">🔍</div>
+    <div class="text" id="statusText">Processing...</div>
+    <div class="subtext" id="statusSub"></div>
+    <div class="progress-bar"><div class="fill" id="progressFill"></div></div>
+    <div id="steps">
+      <div class="step" id="s0">○ 📸 Loading image</div>
+      <div class="step" id="s1">○ 🔍 OCR reading</div>
+      <div class="step" id="s2">○ 🧠 Parsing with AI</div>
+      <div class="step" id="s3">📍 Found!</div>
+    </div>
+  </div>
+
+  <!-- Error -->
+  <div id="error" class="hidden"></div>
+
+  <!-- Result -->
+  <div id="result" class="hidden">
+    <div class="badge">✅ Booking detected</div>
+    <div id="resultRows"></div>
+    <button class="btn btn-solid" id="generateBtn" onclick="generateItinerary()" style="margin-top:20px">
+      ✨ Create my itinerary
+    </button>
+  </div>
+
+  <!-- Manual -->
+  <div id="manualArea" class="hidden">
+    <p style="color:rgba(255,255,255,0.5);font-size:14px;text-align:center;margin-bottom:16px">
+      Couldn't read the screenshot. Enter details manually:
+    </p>
+    <input id="mDest" class="input" placeholder="Destination">
+    <input id="mIn" class="input" placeholder="Check-in (e.g. Sep 15)">
+    <input id="mOut" class="input" placeholder="Check-out">
+    <input id="mHotel" class="input" placeholder="Hotel (optional)">
+    <button class="btn btn-solid" onclick="applyManual()" style="margin-top:12px">✅ Confirm</button>
+  </div>
+
+  <!-- Itinerary -->
+  <div id="itinerary" class="hidden"></div>
+  <div id="log" class="hidden"></div>
+</div>
+
+<style>
+.input {
+  background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 10px; padding: 12px 14px; color: #fff; font-size: 14px;
+  width: 100%; margin-bottom: 8px; outline: none;
+}
+.input:focus { border-color: rgba(232,168,50,0.5); }
+</style>
+
+<script>
+const API = 'https://gp-landing-rho.vercel.app/api';
+let currentBooking = null;
+let currentImage = null;
+
+function log(msg) { 
+  const el = document.getElementById('log');
+  el.style.display = 'block';
+  el.textContent += (new Date().toLocaleTimeString()) + ' ' + msg + '\n';
+}
+
+function pickFile() { document.getElementById('fileInput').click(); }
+
+function step(id, status) {
+  const el = document.getElementById('s' + id);
+  el.className = 'step ' + status;
+  if (status === 'done') el.textContent = '✓ ' + el.textContent.slice(2);
+  else if (status === 'active') el.textContent = '○ ' + el.textContent.slice(2);
+}
+
+// ─── FILE PICKED ───
+async function onFile(e) {
+  const file = e.target.files?.[0];
+  if (!file) return;
+  
+  // Reset
+  document.getElementById('uploadArea').style.display = 'none';
+  document.getElementById('result').classList.add('hidden');
+  document.getElementById('error').classList.add('hidden');
+  document.getElementById('manualArea').classList.add('hidden');
+  document.getElementById('status').classList.remove('hidden');
+  document.getElementById('progressFill').style.width = '0%';
+  document.getElementById('preview').style.display = 'none';
+  step(0, 'active');
+  
+  log(`File: ${file.name} (${(file.size/1024).toFixed(0)}KB)`);
+  
+  // Read as data URL
+  const dataUrl = await new Promise(r => {
+    const reader = new FileReader();
+    reader.onload = () => r(reader.result);
+    reader.readAsDataURL(file);
+  });
+  
+  // Show preview
+  const img = document.getElementById('preview');
+  img.src = dataUrl;
+  img.onload = () => {
+    // Resize if too wide
+    if (img.naturalWidth > 1200) {
+      const c = document.createElement('canvas');
+      c.width = 1200;
+      c.height = img.naturalHeight * 1200 / img.naturalWidth;
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      currentImage = c.toDataURL('image/jpeg', 0.8);
+      log(`Resized: ${img.naturalWidth}x${img.naturalHeight} → ${c.width}x${c.height}`);
+    } else {
+      currentImage = dataUrl;
+    }
+  };
+  
+  // Wait for image to load
+  await new Promise(r => { img.onload = r; if (img.complete) r(); });
+  
+  step(0, 'done');
+  
+  // Run OCR
+  await runOcr(dataUrl);
+}
+
+// ─── OCR ───
+async function runOcr(dataUrl) {
+  document.getElementById('statusText').textContent = 'Reading your screenshot...';
+  document.getElementById('progressFill').style.width = '20%';
+  step(1, 'active');
+  
+  let ocrText = '';
+  try {
+    const result = await Tesseract.recognize(
+      dataUrl,
+      'eng',
+      { 
+        logger: m => {
+          if (m.status === 'recognizing text') {
+            document.getElementById('progressFill').style.width = (20 + m.progress * 40) + '%';
+          }
+        }
+      }
+    );
+    ocrText = result?.data?.text?.trim() || '';
+    log(`OCR extracted ${ocrText.length} chars`);
+  } catch (e) {
+    log(`OCR error: ${e.message}`);
+  }
+  
+  step(1, 'done');
+  
+  // Parse with API
+  await parseBooking(ocrText);
+}
+
+// ─── PARSE ───
+async function parseBooking(ocrText) {
+  document.getElementById('statusText').textContent = 'Parsing with AI...';
+  document.getElementById('progressFill').style.width = '60%';
+  step(2, 'active');
+  
+  let parsed = null;
+  try {
+    const resp = await fetch(API + '/parse-booking', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        images: currentImage ? [currentImage] : undefined,
+        ocrText: ocrText || undefined
+      })
+    });
+    if (resp.ok) {
+      const j = await resp.json();
+      log(`API response: ${JSON.stringify(j).slice(0,200)}`);
+      if (j?.destination && j.destination !== 'Unknown') {
+        parsed = j;
+      }
+    }
+  } catch (e) {
+    log(`API error: ${e.message}`);
+  }
+  
+  document.getElementById('progressFill').style.width = '90%';
+  
+  if (parsed) {
+    step(2, 'done');
+    showResult(parsed);
+  } else {
+    // Try manual
+    document.getElementById('status').classList.add('hidden');
+    document.getElementById('manualArea').classList.remove('hidden');
+    document.getElementById('error').classList.remove('hidden');
+    document.getElementById('error').textContent = 'Could not read the screenshot. Please enter the details manually below.';
+  }
+}
+
+// ─── SHOW RESULT ───
+function showResult(data) {
+  currentBooking = data;
+  document.getElementById('status').classList.add('hidden');
+  document.getElementById('result').classList.remove('hidden');
+  
+  const rows = document.getElementById('resultRows');
+  rows.innerHTML = '';
+  
+  const fields = [
+    ['📍', 'Destination', data.destination],
+    ['📅', 'Check-in', data.checkIn],
+    ['📅', 'Check-out', data.checkOut],
+    ['🏨', 'Accommodation', data.hotel],
+    ['👥', 'Guests', data.guests || '—'],
+    ['🔑', 'Confirmation', data.confirmation || '—'],
+  ];
+  
+  fields.forEach((f, i) => {
+    if (i > 0) rows.innerHTML += '<div class="divider"></div>';
+    rows.innerHTML += `<div class="row"><span class="label">${f[0]} ${f[1]}</span><span class="value">${f[2] || '—'}</span></div>`;
+  });
+}
+
+// ─── MANUAL ───
+function applyManual() {
+  const data = {
+    destination: document.getElementById('mDest').value || 'Your destination',
+    checkIn: document.getElementById('mIn').value || '—',
+    checkOut: document.getElementById('mOut').value || '—',
+    hotel: document.getElementById('mHotel').value || '—',
+  };
+  showResult(data);
+}
+
+// ─── GENERATE ITINERARY ───
+async function generateItinerary() {
+  if (!currentBooking) return;
+  
+  document.getElementById('generateBtn').disabled = true;
+  document.getElementById('generateBtn').textContent = '⏳ Creating...';
+  
+  try {
+    const resp = await fetch(API + '/itinerary', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        destination: currentBooking.destination,
+        checkIn: currentBooking.checkIn,
+        checkOut: currentBooking.checkOut,
+        hotel: currentBooking.hotel || '',
+        preferences: { style: 'balanced', vibe: 'moderate' }
+      })
+    });
+    
+    if (resp.ok) {
+      const data = await resp.json();
+      showItinerary(data);
+    }
+  } catch (e) {
+    log(`Itinerary error: ${e.message}`);
+    document.getElementById('generateBtn').disabled = false;
+    document.getElementById('generateBtn').textContent = '✨ Create my itinerary';
+  }
+}
+
+// ─── SHOW ITINERARY ───
+function showItinerary(data) {
+  document.getElementById('generateBtn').textContent = '✅ Done!';
+  document.getElementById('generateBtn').disabled = false;
+  
+  if (!data?.days?.length) {
+    document.getElementById('error').classList.remove('hidden');
+    document.getElementById('error').textContent = 'Could not generate itinerary. Try again?';
+    return;
+  }
+  
+  const container = document.getElementById('itinerary');
+  container.classList.remove('hidden');
+  container.innerHTML = '';
+  
+  data.days.forEach(day => {
+    const div = document.createElement('div');
+    div.className = 'itinerary-day';
+    div.innerHTML = `
+      <div class="day-header">
+        <span class="icon">${day.icon || '📅'}</span>
+        <div>
+          <div class="title">${day.label || 'Day ' + day.day}</div>
+          <div class="subtitle">${day.subtitle || ''}</div>
+        </div>
+      </div>
+      ${(day.activities || []).map(a => `
+        <div class="activity">
+          <span class="time">${a.icon || ''} ${a.time || ''}</span>
+          <span class="desc">${a.title || ''}${a.price ? ' <span class="price">€' + a.price + '</span>' : ''}</span>
+        </div>
+      `).join('')}
+    `;
+    container.appendChild(div);
+  });
+  
+  // Scroll to itinerary
+  document.getElementById('result').scrollIntoView({ behavior: 'smooth' });
+}
+
+log('Page loaded. Ready to scan!');
+</script>
+</body>
+</html>

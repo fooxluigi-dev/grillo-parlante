@@ -17,7 +17,7 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
   const [parsed, setParsed] = useState(null);
   const [error, setError] = useState('');
   const [manualOpen, setManualOpen] = useState(false);
-  const [manual, setManual] = useState({ destination: '', checkIn: '', checkOut: '', hotel: '' });
+  const [manual, setManual] = useState({ destination: '', checkIn: '', checkOut: '', hotel: '', type: 'hotel', eventName: '', flightRoute: '' });
   const [textIdx, setTextIdx] = useState(-1);
 
   // Animations
@@ -174,9 +174,24 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
       t.push("Reading the details...");
       t.push("Almost there! Processing the info...");
       t.push("I'll create the perfect itinerary... 🦗");
+      return t;
+    }
+    const type = d.type || 'hotel';
+    if (d.destination && d.destination !== 'your destination')
+      t.push(`I can see you're heading to ${d.destination}! ${type === 'event' ? '🎟️' : '🏖️'}`);
+    if (type === 'flight') {
+      const f = d.flight || {};
+      if (f.flightNumber) t.push(`Flight ${f.flightNumber} — ${f.airline || ''} ✈️`);
+      if (f.departureAirport && f.arrivalAirport)
+        t.push(`${f.departureAirport} → ${f.arrivalAirport} ${f.departureTime || ''} 📍`);
+      if (f.gate) t.push(`Gate ${f.gate} — boarding soon! 🛫`);
+    } else if (type === 'event') {
+      const e = d.event || {};
+      if (e.eventName) t.push(`${e.eventName} — incredible! 🎭`);
+      if (e.eventDate) t.push(`Mark your calendar: ${e.eventDate} ${e.eventTime || ''} 📅`);
+      if (e.venue) t.push(`At ${e.venue} 📍`);
+      if (e.ticketCount) t.push(`${e.ticketCount} ticket${e.ticketCount > 1 ? 's' : ''} for you! 🎟️`);
     } else {
-      if (d.destination && d.destination !== 'your destination')
-        t.push(`I can see you're heading to ${d.destination}! 🏖️`);
       if (d.hotel && d.hotel !== '—')
         t.push(`You'll be at ${d.hotel} — lovely! 🏠`);
       if (d.checkIn && d.checkIn !== '—')
@@ -185,11 +200,11 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
         t.push(`Check-out ${d.checkOut} 🌴`);
       if (d.guests && d.guests !== '—')
         t.push(`${d.guests} — great crew! 👥`);
-      if (d.confirmation && d.confirmation !== '—')
-        t.push(`Ref ${d.confirmation} ✅`);
-      t.push('Let me put together something special for you... ✨');
-      t.push("I'll create the perfect itinerary, just give me a moment... 🦗");
     }
+    if (d.confirmation && d.confirmation !== '—')
+      t.push(`Ref ${d.confirmation} ✅`);
+    t.push('Let me put together something special for you... ✨');
+    t.push("I'll create the perfect itinerary, just give me a moment... 🦗");
     return t.filter(Boolean);
   };
 
@@ -198,7 +213,28 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
   };
 
   const applyManual = () => {
-    setParsed({ ...parsed, destination: manual.destination, checkIn: manual.checkIn, checkOut: manual.checkOut, hotel: manual.hotel, _isManual: true });
+    const type = manual.type || 'hotel';
+    const base = {
+      ...parsed,
+      type,
+      destination: manual.destination,
+      checkIn: manual.checkIn,
+      checkOut: manual.checkOut || (type === 'event' ? manual.checkIn : ''),
+      hotel: manual.hotel,
+      _isManual: true,
+    };
+    if (type === 'flight') {
+      base.flight = { flightNumber: manual.hotel, departureDate: manual.checkIn };
+      if (manual.flightRoute) {
+        const parts = manual.flightRoute.split('→');
+        base.flight.departureAirport = (parts[0] || '').trim();
+        base.flight.arrivalAirport = (parts[1] || '').trim();
+      }
+    }
+    if (type === 'event') {
+      base.event = { eventName: manual.eventName || manual.hotel, eventDate: manual.checkIn, venue: manual.hotel };
+    }
+    setParsed(base);
     setManualOpen(false);
   };
 
@@ -270,14 +306,48 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
               {manualOpen ? (
                 <View style={styles.manualForm}>
                   <Text style={styles.manualTitle}>Enter your booking</Text>
+                  <View style={styles.typeRow}>
+                    {['hotel','flight','event'].map(t => (
+                      <TouchableOpacity key={t} style={[styles.typeChip, manual.type === t && styles.typeChipActive]}
+                        onPress={() => setManual(m => ({...m, type: t}))}>
+                        <Text style={[styles.typeChipText, manual.type === t && styles.typeChipTextActive]}>
+                          {t === 'hotel' ? '🏨 Hotel' : t === 'flight' ? '✈️ Flight' : '🎟️ Event'}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
                   <TextInput style={styles.input} placeholder="Destination" placeholderTextColor="rgba(255,255,255,0.3)"
                     value={manual.destination} onChangeText={t => setManual(m => ({...m, destination: t}))} />
-                  <TextInput style={styles.input} placeholder="Check-in date" placeholderTextColor="rgba(255,255,255,0.3)"
-                    value={manual.checkIn} onChangeText={t => setManual(m => ({...m, checkIn: t}))} />
-                  <TextInput style={styles.input} placeholder="Check-out date" placeholderTextColor="rgba(255,255,255,0.3)"
-                    value={manual.checkOut} onChangeText={t => setManual(m => ({...m, checkOut: t}))} />
-                  <TextInput style={styles.input} placeholder="Hotel name" placeholderTextColor="rgba(255,255,255,0.3)"
-                    value={manual.hotel} onChangeText={t => setManual(m => ({...m, hotel: t}))} />
+                  {manual.type === 'hotel' && (
+                    <>
+                      <TextInput style={styles.input} placeholder="Check-in date" placeholderTextColor="rgba(255,255,255,0.3)"
+                        value={manual.checkIn} onChangeText={t => setManual(m => ({...m, checkIn: t}))} />
+                      <TextInput style={styles.input} placeholder="Check-out date" placeholderTextColor="rgba(255,255,255,0.3)"
+                        value={manual.checkOut} onChangeText={t => setManual(m => ({...m, checkOut: t}))} />
+                      <TextInput style={styles.input} placeholder="Hotel name" placeholderTextColor="rgba(255,255,255,0.3)"
+                        value={manual.hotel} onChangeText={t => setManual(m => ({...m, hotel: t}))} />
+                    </>
+                  )}
+                  {manual.type === 'flight' && (
+                    <>
+                      <TextInput style={styles.input} placeholder="Flight (es. Ryanair FR2345)" placeholderTextColor="rgba(255,255,255,0.3)"
+                        value={manual.hotel} onChangeText={t => setManual(m => ({...m, hotel: t}))} />
+                      <TextInput style={styles.input} placeholder="Date (es. Aug 22)" placeholderTextColor="rgba(255,255,255,0.3)"
+                        value={manual.checkIn} onChangeText={t => setManual(m => ({...m, checkIn: t}))} />
+                      <TextInput style={styles.input} placeholder="Departure airport → Arrival (es. BGY → CRL)" placeholderTextColor="rgba(255,255,255,0.3)"
+                        value={manual.flightRoute || ''} onChangeText={t => setManual(m => ({...m, flightRoute: t}))} />
+                    </>
+                  )}
+                  {manual.type === 'event' && (
+                    <>
+                      <TextInput style={styles.input} placeholder="Event name (es. Sagrada Familia)" placeholderTextColor="rgba(255,255,255,0.3)"
+                        value={manual.eventName || ''} onChangeText={t => setManual(m => ({...m, eventName: t}))} />
+                      <TextInput style={styles.input} placeholder="Date (es. Aug 24)" placeholderTextColor="rgba(255,255,255,0.3)"
+                        value={manual.checkIn} onChangeText={t => setManual(m => ({...m, checkIn: t}))} />
+                      <TextInput style={styles.input} placeholder="Venue" placeholderTextColor="rgba(255,255,255,0.3)"
+                        value={manual.hotel} onChangeText={t => setManual(m => ({...m, hotel: t}))} />
+                    </>
+                  )}
                   <TouchableOpacity style={styles.confirmBtn} onPress={applyManual}>
                     <Text style={styles.confirmText}>✅ Confirm</Text>
                   </TouchableOpacity>
@@ -286,13 +356,35 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
                 <>
                   <View style={styles.row}><Text style={styles.label}>📍 Destination</Text><Text style={styles.value}>{parsed.destination}</Text></View>
                   <View style={styles.divider} />
-                  <View style={styles.row}><Text style={styles.label}>📅 Check-in</Text><Text style={styles.value}>{parsed.checkIn}</Text></View>
+                  {parsed.type === 'flight' ? (
+                    <>
+                      {parsed.hotel ? <><View style={styles.row}><Text style={styles.label}>✈️ Flight</Text><Text style={styles.value}>{parsed.hotel}</Text></View><View style={styles.divider} /></> : null}
+                      <View style={styles.row}><Text style={styles.label}>🛫 Route</Text><Text style={styles.value}>{(parsed.flight?.departureAirport||'?')} → {(parsed.flight?.arrivalAirport||'?')}</Text></View>
+                      <View style={styles.divider} />
+                      <View style={styles.row}><Text style={styles.label}>🕐 Departure</Text><Text style={styles.value}>{parsed.flight?.departureDate || parsed.checkIn} {parsed.flight?.departureTime || ''}</Text></View>
+                      <View style={styles.divider} />
+                      {parsed.flight?.arrivalTime ? <><View style={styles.row}><Text style={styles.label}>🕐 Arrival</Text><Text style={styles.value}>{parsed.flight?.arrivalDate || ''} {parsed.flight?.arrivalTime}</Text></View><View style={styles.divider} /></> : null}
+                      {parsed.flight?.terminal ? <><View style={styles.row}><Text style={styles.label}>🏢 Terminal</Text><Text style={styles.value}>{parsed.flight.terminal}</Text></View><View style={styles.divider} /></> : null}
+                      {parsed.flight?.gate ? <><View style={styles.row}><Text style={styles.label}>🚪 Gate</Text><Text style={styles.value}>{parsed.flight.gate}</Text></View><View style={styles.divider} /></> : null}
+                    </>
+                  ) : parsed.type === 'event' ? (
+                    <>
+                      {parsed.event?.eventName ? <><View style={styles.row}><Text style={styles.label}>🎭 Event</Text><Text style={styles.value}>{parsed.event.eventName}</Text></View><View style={styles.divider} /></> : null}
+                      {parsed.event?.eventDate ? <><View style={styles.row}><Text style={styles.label}>📅 Date</Text><Text style={styles.value}>{parsed.event.eventDate} {parsed.event.eventTime || ''}</Text></View><View style={styles.divider} /></> : null}
+                      {parsed.event?.venue ? <><View style={styles.row}><Text style={styles.label}>📍 Venue</Text><Text style={styles.value}>{parsed.event.venue}</Text></View><View style={styles.divider} /></> : null}
+                      {parsed.event?.ticketType ? <><View style={styles.row}><Text style={styles.label}>🎟️ Ticket</Text><Text style={styles.value}>{parsed.event.ticketType} {parsed.event.ticketCount ? `×${parsed.event.ticketCount}` : ''}</Text></View><View style={styles.divider} /></> : null}
+                    </>
+                  ) : (
+                    <>
+                      <View style={styles.row}><Text style={styles.label}>📅 Check-in</Text><Text style={styles.value}>{parsed.checkIn}</Text></View>
+                      <View style={styles.divider} />
+                      <View style={styles.row}><Text style={styles.label}>📅 Check-out</Text><Text style={styles.value}>{parsed.checkOut}</Text></View>
+                      <View style={styles.divider} />
+                      <View style={styles.row}><Text style={styles.label}>🏨 Accommodation</Text><Text style={styles.value}>{parsed.hotel}</Text></View>
+                    </>
+                  )}
                   <View style={styles.divider} />
-                  <View style={styles.row}><Text style={styles.label}>📅 Check-out</Text><Text style={styles.value}>{parsed.checkOut}</Text></View>
-                  <View style={styles.divider} />
-                  <View style={styles.row}><Text style={styles.label}>🏨 Accommodation</Text><Text style={styles.value}>{parsed.hotel}</Text></View>
-                  <View style={styles.divider} />
-                  <View style={styles.row}><Text style={styles.label}>👥 Guests</Text><Text style={styles.value}>{parsed.guests || '—'}</Text></View>
+                  <View style={styles.row}><Text style={styles.label}>👥 Guests</Text><Text style={styles.value}>{parsed.guests || (parsed.guestNames?.length || '—')}</Text></View>
                   <View style={styles.divider} />
                   <View style={styles.row}><Text style={styles.label}>🔑 Confirmation</Text><Text style={styles.value}>{parsed.confirmation || '—'}</Text></View>
 
@@ -365,6 +457,14 @@ const styles = StyleSheet.create({
   manualBtnText: { fontSize: 13, fontWeight: '600', color: 'rgba(232,168,50,0.9)' },
   manualForm: { width: '100%' },
   manualTitle: { fontSize: 15, fontWeight: '700', color: '#fff', marginBottom: 12, textAlign: 'center' },
+  typeRow: { flexDirection: 'row', gap: 8, marginBottom: 12 },
+  typeChip: {
+    flex: 1, paddingVertical: 10, borderRadius: 10, alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.06)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
+  },
+  typeChipActive: { backgroundColor: 'rgba(232,168,50,0.15)', borderColor: 'rgba(232,168,50,0.4)' },
+  typeChipText: { fontSize: 13, fontWeight: '600', color: 'rgba(255,255,255,0.5)' },
+  typeChipTextActive: { color: 'rgba(232,168,50,0.9)' },
   input: {
     backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 10, paddingVertical: 12, paddingHorizontal: 14,
     color: '#fff', fontSize: 14, marginBottom: 8, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',

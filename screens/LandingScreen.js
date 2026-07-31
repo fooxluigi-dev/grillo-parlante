@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 import { Colors } from '../theme/colors';
 import { AuthContext } from '../context/AuthContext';
+import UploadBookingScreen from './UploadBookingScreen';
 
 const { width: W, height: H } = Dimensions.get('window');
 const IS_WEB = Platform.OS === 'web';
@@ -647,9 +648,16 @@ export default function LandingScreen({ navigation, onLogin }) {
   const [sceneIdx, setSceneIdx] = useState(0);
   const [uploadDone, setUploadDone] = useState(false);
   const [uploadTrigger, setUploadTrigger] = useState(0);
+  const [showUpload, setShowUpload] = useState(false);
   const [liveTrigger, setLiveTrigger] = useState(0);
   const [dnaTrigger, setDnaTrigger] = useState(0);
   const [memTrigger, setMemTrigger] = useState(0);
+
+  const handleBookingParsed = (booking) => {
+    setShowUpload(false);
+    // Navigate to HomeScreen with parsed booking data
+    navigation?.navigate?.('Home', { pendingBooking: booking }) || onLogin?.();
+  };
 
   const handleScroll = useCallback((e) => {
     const y = e.nativeEvent.contentOffset.y;
@@ -789,7 +797,7 @@ export default function LandingScreen({ navigation, onLogin }) {
             <MemoryBubbles trigger={memTrigger} />
             <Scene delay={900}>
               <View style={{ alignItems: 'center', marginTop: 20 }}>
-                <TouchableOpacity style={styles.ctaBtn} onPress={onLogin} activeOpacity={0.8}>
+                <TouchableOpacity style={styles.ctaBtn} onPress={() => setShowUpload(true)} activeOpacity={0.8}>
                   <Text style={styles.ctaText}>Send me your next booking</Text>
                 </TouchableOpacity>
               </View>
@@ -797,6 +805,14 @@ export default function LandingScreen({ navigation, onLogin }) {
           </View>
         </ImageBackground>
       </Animated.ScrollView>
+
+      {/* Upload modal */}
+      {showUpload && (
+        <UploadBookingScreen
+          onClose={() => setShowUpload(false)}
+          onBookingParsed={handleBookingParsed}
+        />
+      )}
 
       {/* Scene indicator */}
       <View style={styles.progress}>
