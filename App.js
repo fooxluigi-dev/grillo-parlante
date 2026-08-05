@@ -85,6 +85,7 @@ export default function App() {
   } : null;
 
   const isLoggedIn = !!session;
+  const [loginMode, setLoginMode] = useState('signin'); // 'signin' | 'signup'
 
   // Sign up / Sign in with Supabase
   const login = useCallback(async ({ email, password, name, isSignUp }) => {
@@ -131,15 +132,20 @@ export default function App() {
               </>
             ) : (
               <Stack.Screen name="Landing">
-                {() => <LandingScreen onLogin={() => setShowLogin(true)} />}
+                {() => (
+                  <LandingScreen
+                    onLogin={() => { setLoginMode('signin'); setShowLogin(true); }}
+                    onSignUp={() => { setLoginMode('signup'); setShowLogin(true); }}
+                  />
+                )}
               </Stack.Screen>
             )}
           </Stack.Navigator>
         </NavigationContainer>
 
-        {/* Login Modal */}
+        {/* Login Modal — signup by default (user just arrived from the upload flow) */}
         <Modal visible={showLogin} animationType="slide" transparent={true} onRequestClose={() => setShowLogin(false)}>
-          <LoginScreen onLogin={login} onClose={() => setShowLogin(false)} />
+          <LoginScreen onLogin={login} onClose={() => setShowLogin(false)} initialMode={loginMode} />
         </Modal>
       </SafeAreaView>
       </View>

@@ -5,8 +5,8 @@ import {
 } from 'react-native';
 import { Colors } from '../theme/colors';
 
-export default function LoginScreen({ onLogin, onClose }) {
-  const [isSignUp, setIsSignUp] = useState(false);
+export default function LoginScreen({ onLogin, onClose, initialMode = 'signin' }) {
+  const [isSignUp, setIsSignUp] = useState(initialMode === 'signup');
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -43,9 +43,13 @@ export default function LoginScreen({ onLogin, onClose }) {
           {/* Header */}
           <View style={styles.header}>
             <Text style={styles.mascot}>🦗</Text>
-            <Text style={styles.title}>{isSignUp ? 'Create account' : 'Welcome back'}</Text>
+            <Text style={styles.title}>
+              {isSignUp ? "Let's hunt your dream trip together" : 'Welcome back'}
+            </Text>
             <Text style={styles.sub}>
-              {isSignUp ? 'Start planning smarter trips' : 'Sign in to your Grillo account'}
+              {isSignUp
+                ? 'Your booking is ready — create your account and I\u2019ll build the perfect itinerary.'
+                : 'Sign in to your Grillo account'}
             </Text>
           </View>
 
@@ -90,7 +94,7 @@ export default function LoginScreen({ onLogin, onClose }) {
 
             {error ? <Text style={styles.errorText}>{error}</Text> : null}
             <TouchableOpacity style={styles.submitBtn} onPress={handleSubmit}>
-              <Text style={styles.submitText}>{isSignUp ? 'Create account' : 'Sign in'}</Text>
+              <Text style={styles.submitText}>{isSignUp ? 'Create my account' : 'Sign in'}</Text>
             </TouchableOpacity>
           </View>
 
