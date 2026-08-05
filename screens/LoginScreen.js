@@ -123,7 +123,7 @@ const styles = StyleSheet.create({
   closeX: { fontSize: 20, color: Colors.sand, fontWeight: '600' },
   header: { alignItems: 'center', marginBottom: 20 },
   mascot: { fontSize: 48 },
-  title: { fontSize: 22, fontWeight: '800', color: Colors.brown, marginTop: 8 },
+  title: { fontSize: 22, fontWeight: '800', color: Colors.brown, marginTop: 8, textAlign: 'center' },
   sub: { fontSize: 13, color: Colors.sand, marginTop: 4, textAlign: 'center' },
   form: { gap: 14 },
   inputWrap: { gap: 4 },
