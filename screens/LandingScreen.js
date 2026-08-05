@@ -1,7 +1,7 @@
 import React, { useRef, useEffect, useState, useContext, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView, Platform,
-  Animated, Dimensions, ImageBackground
+  Animated, Dimensions, ImageBackground, Modal
 } from 'react-native';
 import { Colors } from '../theme/colors';
 import { AuthContext } from '../context/AuthContext';
@@ -806,13 +806,13 @@ export default function LandingScreen({ navigation, onLogin }) {
         </ImageBackground>
       </Animated.ScrollView>
 
-      {/* Upload modal */}
-      {showUpload && (
+      {/* Upload modal — full-screen so the loading animation and result card are never cut */}
+      <Modal visible={showUpload} animationType="slide" onRequestClose={() => setShowUpload(false)}>
         <UploadBookingScreen
           onClose={() => setShowUpload(false)}
           onBookingParsed={handleBookingParsed}
         />
-      )}
+      </Modal>
 
       {/* Scene indicator */}
       <View style={styles.progress}>
