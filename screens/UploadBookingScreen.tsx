@@ -57,7 +57,7 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }: Upload
   }, []);
 
   // ─── Pick image (web + native) ───
-  const resizeImage = (base64: string, maxW = 1200): Promise<string> => new Promise(resolve => {
+  const resizeImage = (base64: string, maxW = 1600): Promise<string> => new Promise(resolve => {
     if (Platform.OS !== 'web') {
       resolve(base64);
       return;
@@ -72,6 +72,7 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }: Upload
       c.getContext('2d')!.drawImage(img, 0, 0, width, height);
       resolve(c.toDataURL('image/jpeg', 0.8));
     };
+    img.onerror = () => resolve(base64);
     img.src = base64;
   });
 
@@ -97,6 +98,16 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }: Upload
         reader.onload = () => r(reader.result as string);
         reader.readAsDataURL(file);
       });
+
+      // Only resize when the payload risks hitting Vercel's 4.5MB body limit.
+      // readAsDataURL puro + server-side Sharp is the reliable path (canvas corrupts on iOS).
+      if (dataUrl.length > 3.5 * 1024 * 1024) {
+        try {
+          dataUrl = await resizeImage(dataUrl, 1600);
+        } catch (e) {
+          console.log('Resize failed, sending original:', (e as Error)?.message);
+        }
+      }
     } else {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ['images'], quality: 0.5, base64: true,
@@ -105,10 +116,8 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }: Upload
       dataUrl = `data:image/jpeg;base64,${result.assets[0].base64}`;
     }
 
-    // Resize to 1200px before sending
-    const resized = Platform.OS === 'web' ? await resizeImage(dataUrl, 1200) : dataUrl;
-    setImage(resized);
-    parseImage(resized);
+    setImage(dataUrl);
+    parseImage(dataUrl);
   };
 
   // ─── Parse: send image → API (server handles OCR + parsing) ───
