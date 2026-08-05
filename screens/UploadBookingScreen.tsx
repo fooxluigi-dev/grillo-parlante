@@ -51,9 +51,18 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }: Upload
   const resultOp = useRef(new Animated.Value(0)).current;
   const resultSlide = useRef(new Animated.Value(30)).current;
   const textBlend = useRef(new Animated.Value(0)).current;
+  const spinAnim = useRef(new Animated.Value(0)).current;
+
+  // Hidden <input type=file> mounted in the DOM (reliable on iOS Safari —
+  // createElement+click() without DOM attachment often fails or hangs).
+  const fileInputRef = useRef(null);
 
   useEffect(() => {
     Animated.timing(contentOp, { toValue: 1, duration: 600, useNativeDriver: true }).start();
+    // Infinite spinner rotation
+    Animated.loop(
+      Animated.timing(spinAnim, { toValue: 1, duration: 1200, useNativeDriver: true })
+    ).start();
   }, []);
 
   // ─── Pick image (web + native) ───
@@ -76,24 +85,26 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }: Upload
     img.src = base64;
   });
 
-  const pick = async () => {
-    let dataUrl = '';
+  // Web: user picked a file through the hidden input
+  const handleFileChosen = async (file: File) => {
+    if (!file) return;
+    console.log('File:', file.name, file.type, (file.size / 1024).toFixed(1) + 'KB');
 
-    if (Platform.OS === 'web') {
-      const files = await new Promise<File[]>((resolve) => {
-        const el = document.createElement('input');
-        el.type = 'file';
-        el.accept = 'image/*';
-        el.multiple = false;
-        el.onchange = (e) => resolve(Array.from((e.target as HTMLInputElement).files || []));
-        el.click();
-      });
-      if (!files.length) return;
+    // Enter the loading screen IMMEDIATELY — before reading the file —
+    // so the user always sees feedback right after picking.
+    setParsing(true);
+    setPhase(1);
+    setStep(0);
+    setError('');
+    setTextIdx(-1);
 
-      const file = files[0];
-      console.log('File:', file.name, file.type, (file.size / 1024).toFixed(1) + 'KB');
+    Animated.parallel([
+      Animated.timing(parseOp, { toValue: 1, duration: 400, useNativeDriver: true }),
+      Animated.spring(parseScale, { toValue: 1, tension: 40, friction: 10, useNativeDriver: true }),
+    ]).start();
 
-      dataUrl = await new Promise<string>((r) => {
+    try {
+      let dataUrl = await new Promise<string>((r) => {
         const reader = new FileReader();
         reader.onload = () => r(reader.result as string);
         reader.readAsDataURL(file);
@@ -108,16 +119,53 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }: Upload
           console.log('Resize failed, sending original:', (e as Error)?.message);
         }
       }
+
+      setImage(dataUrl);
+      await parseImage(dataUrl);
+    } catch (e) {
+      console.error('File read error:', e);
+      setError('Could not read that file. Try a PNG or JPEG screenshot.');
+      setParsing(false);
+      setPhase(0);
+    }
+  };
+
+  const pick = async () => {
+    if (Platform.OS === 'web') {
+      // Click the hidden input that lives in the DOM — reliable on iOS Safari.
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+        fileInputRef.current.click();
+      } else {
+        // Fallback: create+append+click (better than bare createElement)
+        const el = document.createElement('input');
+        el.type = 'file';
+        el.accept = 'image/*';
+        el.style.position = 'fixed';
+        el.style.opacity = '0';
+        el.style.pointerEvents = 'none';
+        document.body.appendChild(el);
+        el.onchange = (e) => {
+          const f = (e.target as HTMLInputElement).files?.[0];
+          document.body.removeChild(el);
+          if (f) handleFileChosen(f);
+        };
+        el.click();
+      }
     } else {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ['images'], quality: 0.5, base64: true,
       });
       if (result.canceled || !result.assets?.length) return;
-      dataUrl = `data:image/jpeg;base64,${result.assets[0].base64}`;
+      const dataUrl = `data:image/jpeg;base64,${result.assets[0].base64}`;
+      setParsing(true);
+      setPhase(1);
+      setStep(0);
+      setError('');
+      setTextIdx(-1);
+      setImage(dataUrl);
+      parseImage(dataUrl);
     }
-
-    setImage(dataUrl);
-    parseImage(dataUrl);
   };
 
   // ─── Parse: send image → API (server handles OCR + parsing) ───
@@ -128,36 +176,51 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }: Upload
     setError('');
     setTextIdx(-1);
 
-    Animated.parallel([
-      Animated.timing(parseOp, { toValue: 1, duration: 500, useNativeDriver: true }),
-      Animated.spring(parseScale, { toValue: 1, tension: 40, friction: 10, useNativeDriver: true }),
-    ]).start();
-
     // Step animation (runs in background)
     const steps = ['📸 Loading...', '🔍 Scanning...', '📝 Reading...', '🧠 Parsing...', '📍 Found!', '✅ Done!'];
-    steps.forEach((_, i) => setTimeout(() => setStep(i), i * 1500 + 400));
+    const timers = steps.map((_, i) => setTimeout(() => setStep(i), i * 1500 + 400));
 
     let result: ParsedBooking | null = null;
     try {
       // Send image directly to API — server handles OCR (GPT-4o → OCR.space) + DeepSeek parsing
-      const resp = await fetch(API, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          images: [dataUrl],
-          // No client-side OCR — server does it better
-        }),
-      });
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 75000); // safety net — never spin forever
+
+      let resp: Response;
+      try {
+        resp = await fetch(API, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ images: [dataUrl] }),
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeout);
+      }
+
       if (resp.ok) {
         const j = await resp.json();
         if (j?.destination && j.destination !== 'Unknown') {
           result = { ...j, _isFallback: false } as ParsedBooking;
+        } else {
+          console.warn('API response without destination:', JSON.stringify(j).slice(0, 300));
         }
+      } else {
+        console.warn('API HTTP', resp.status);
+        setError(resp.status === 413
+          ? 'Image too large for the server. Try a smaller screenshot.'
+          : `Server error (${resp.status}). Try again?`);
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error('API error:', e);
-      setError('Could not reach the server. Try again?');
+      if (e?.name === 'AbortError') {
+        setError('The server took too long. Check your connection and try again.');
+      } else {
+        setError('Could not reach the server. Try again?');
+      }
     }
+
+    timers.forEach(clearTimeout);
 
     // Fallback
     if (!result) {
@@ -282,6 +345,19 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }: Upload
 
   return (
     <View style={styles.root}>
+      {/* Hidden file input — lives in the DOM so iOS Safari reliably opens the picker */}
+      {Platform.OS === 'web' && (
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          style={{ display: 'none' }}
+          onChange={(e) => {
+            const f = (e.target as HTMLInputElement).files?.[0];
+            if (f) handleFileChosen(f);
+          }}
+        />
+      )}
       <SafeAreaView style={{ flex: 1 }}>
         <View style={styles.header}>
           <TouchableOpacity onPress={onClose}><Text style={styles.headerBtn}>← Back</Text></TouchableOpacity>
@@ -304,7 +380,11 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }: Upload
 
         {phase === 1 && (
           <Animated.View style={[styles.parseCard, { opacity: parseOp, transform: [{ scale: parseScale }] }]}>
-            <Text style={styles.parseEmoji}>🔍</Text>
+            <View style={styles.spinnerWrap}>
+              <Animated.View style={[styles.spinner, { transform: [{ rotate: spinAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] }) }] }]}>
+                <Text style={styles.spinnerEmoji}>🦗</Text>
+              </Animated.View>
+            </View>
             <Text style={styles.parseTitle}>Reading your booking...</Text>
             <View style={styles.parseSteps}>
               {['📸 Loading...', '🔍 Scanning...', '📝 Reading...', '🧠 Parsing...', '📍 Found!', '✅ Done!'].map((s, i) => (
@@ -316,6 +396,13 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }: Upload
                 </Animated.Text>
               ))}
             </View>
+            <Text style={styles.parseHint}>
+              {step >= 3 ? 'Almost there — building your trip...' : 'This can take a few seconds. Hang tight!'}
+            </Text>
+            {error ? <Text style={styles.parseError}>{error}</Text> : null}
+            <TouchableOpacity style={styles.cancelBtn} onPress={onClose} activeOpacity={0.7}>
+              <Text style={styles.cancelBtnText}>✕ Cancel</Text>
+            </TouchableOpacity>
           </Animated.View>
         )}
 
@@ -465,10 +552,25 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: 20, marginHorizontal: 24, marginTop: 40,
     padding: 28, borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)',
   },
+  spinnerWrap: { alignItems: 'center', marginBottom: 16 },
+  spinner: {
+    width: 72, height: 72, borderRadius: 36,
+    backgroundColor: 'rgba(232,168,50,0.12)',
+    borderWidth: 2, borderColor: 'rgba(232,168,50,0.35)',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  spinnerEmoji: { fontSize: 30 },
   parseEmoji: { fontSize: 40, textAlign: 'center', marginBottom: 12 },
   parseTitle: { fontSize: 17, fontWeight: '600', color: '#fff', textAlign: 'center', marginBottom: 24 },
   parseSteps: { gap: 8 },
   parseStepText: { fontSize: 13, color: 'rgba(255,255,255,0.7)', paddingVertical: 3 },
+  parseHint: { fontSize: 12, color: 'rgba(255,255,255,0.4)', textAlign: 'center', marginTop: 20, lineHeight: 17 },
+  parseError: { fontSize: 13, color: '#ff6b6b', textAlign: 'center', marginTop: 14, lineHeight: 18 },
+  cancelBtn: {
+    marginTop: 18, paddingVertical: 10, borderRadius: 10,
+    alignItems: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
+  },
+  cancelBtnText: { fontSize: 13, fontWeight: '600', color: 'rgba(255,255,255,0.5)' },
 
   textsContainer: { paddingHorizontal: 24, paddingTop: 40, minHeight: 80, justifyContent: 'center' },
   cinematicText: { fontSize: 18, fontWeight: '600', color: '#fff', textAlign: 'center', lineHeight: 26 },
