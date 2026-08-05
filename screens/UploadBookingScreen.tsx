@@ -4,21 +4,45 @@ import {
   Image, Platform, SafeAreaView, Animated, Dimensions, TextInput
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
-import Tesseract from 'tesseract.js';
+import type { ParsedBooking, BookingType } from '../types';
 
 const { width: W } = Dimensions.get('window');
-const API = 'https://gp-landing-rho.vercel.app/api/parse-booking';
+// API base URL comes from EXPO_PUBLIC_API_URL env var (set in .env.local)
+const API_BASE = process.env.EXPO_PUBLIC_API_URL;
 
-export default function UploadBookingScreen({ onClose, onBookingParsed }) {
-  const [image, setImage] = useState(null);        // base64 data URL
-  const [parsing, setParsing] = useState(false);
-  const [phase, setPhase] = useState(0);            // 0=pick 1=parsing 2=result
-  const [step, setStep] = useState(-1);
-  const [parsed, setParsed] = useState(null);
-  const [error, setError] = useState('');
-  const [manualOpen, setManualOpen] = useState(false);
-  const [manual, setManual] = useState({ destination: '', checkIn: '', checkOut: '', hotel: '', type: 'hotel', eventName: '', flightRoute: '' });
-  const [textIdx, setTextIdx] = useState(-1);
+if (!API_BASE) {
+  console.warn('[UploadBookingScreen] EXPO_PUBLIC_API_URL not set — API calls will fail');
+}
+
+const API = API_BASE ? `${API_BASE}/api/parse-booking` : 'https://grillo-parlante-api.vercel.app/api/parse-booking';
+
+interface ManualBookingState {
+  destination: string;
+  checkIn: string;
+  checkOut: string;
+  hotel: string;
+  type: BookingType;
+  eventName: string;
+  flightRoute: string;
+}
+
+interface UploadBookingScreenProps {
+  onClose: () => void;
+  onBookingParsed: (booking: ParsedBooking) => void;
+}
+
+export default function UploadBookingScreen({ onClose, onBookingParsed }: UploadBookingScreenProps) {
+  const [image, setImage] = useState<string | null>(null);        // base64 data URL
+  const [parsing, setParsing] = useState<boolean>(false);
+  const [phase, setPhase] = useState<number>(0);            // 0=pick 1=parsing 2=result
+  const [step, setStep] = useState<number>(-1);
+  const [parsed, setParsed] = useState<ParsedBooking | null>(null);
+  const [error, setError] = useState<string>('');
+  const [manualOpen, setManualOpen] = useState<boolean>(false);
+  const [manual, setManual] = useState<ManualBookingState>({ 
+    destination: '', checkIn: '', checkOut: '', hotel: '', type: 'hotel', eventName: '', flightRoute: '' 
+  });
+  const [textIdx, setTextIdx] = useState<number>(-1);
 
   // Animations
   const contentOp = useRef(new Animated.Value(0)).current;
@@ -33,14 +57,19 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
   }, []);
 
   // ─── Pick image (web + native) ───
-  const resizeImage = (base64, maxW=1200) => new Promise(resolve => {
-    const img = new Image();
+  const resizeImage = (base64: string, maxW = 1200): Promise<string> => new Promise(resolve => {
+    if (Platform.OS !== 'web') {
+      resolve(base64);
+      return;
+    }
+    // Use HTMLImageElement for web
+    const img = new (globalThis as any).Image();
     img.onload = () => {
       let {width, height} = img;
       if (width > maxW) { height = height * maxW / width; width = maxW; }
       const c = document.createElement('canvas');
       c.width = width; c.height = height;
-      c.getContext('2d').drawImage(img, 0, 0, width, height);
+      c.getContext('2d')!.drawImage(img, 0, 0, width, height);
       resolve(c.toDataURL('image/jpeg', 0.8));
     };
     img.src = base64;
@@ -50,12 +79,12 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
     let dataUrl = '';
 
     if (Platform.OS === 'web') {
-      const files = await new Promise((resolve) => {
+      const files = await new Promise<File[]>((resolve) => {
         const el = document.createElement('input');
         el.type = 'file';
         el.accept = 'image/*';
         el.multiple = false;
-        el.onchange = (e) => resolve(Array.from(e.target.files || []));
+        el.onchange = (e) => resolve(Array.from((e.target as HTMLInputElement).files || []));
         el.click();
       });
       if (!files.length) return;
@@ -63,9 +92,9 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
       const file = files[0];
       console.log('File:', file.name, file.type, (file.size / 1024).toFixed(1) + 'KB');
 
-      dataUrl = await new Promise((r) => {
+      dataUrl = await new Promise<string>((r) => {
         const reader = new FileReader();
-        reader.onload = () => r(reader.result);
+        reader.onload = () => r(reader.result as string);
         reader.readAsDataURL(file);
       });
     } else {
@@ -82,8 +111,8 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
     parseImage(resized);
   };
 
-  // ─── Parse: send image → OCR → DeepSeek → show result ───
-  const parseImage = async (dataUrl) => {
+  // ─── Parse: send image → API (server handles OCR + parsing) ───
+  const parseImage = async (dataUrl: string) => {
     setParsing(true);
     setPhase(1);
     setStep(0);
@@ -99,33 +128,21 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
     const steps = ['📸 Loading...', '🔍 Scanning...', '📝 Reading...', '🧠 Parsing...', '📍 Found!', '✅ Done!'];
     steps.forEach((_, i) => setTimeout(() => setStep(i), i * 1500 + 400));
 
-    let result = null;
-    let ocrText = '';
+    let result: ParsedBooking | null = null;
     try {
-      // Run Tesseract OCR client-side for maximum reliability
-      if (Platform.OS === 'web') {
-        const { data } = await Tesseract.recognize(dataUrl, 'eng', {
-          logger: (m) => {
-            if (m.status === 'recognizing text') setStep(m.progress > 0.7 ? 2 : 1);
-          }
-        });
-        ocrText = data?.text?.trim() || '';
-        if (ocrText) console.log(`Tesseract extracted ${ocrText.length} chars`);
-      }
-
-      // Send text + image to API
+      // Send image directly to API — server handles OCR (GPT-4o → OCR.space) + DeepSeek parsing
       const resp = await fetch(API, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           images: [dataUrl],
-          ocrText: ocrText || undefined,
+          // No client-side OCR — server does it better
         }),
       });
       if (resp.ok) {
         const j = await resp.json();
         if (j?.destination && j.destination !== 'Unknown') {
-          result = { ...j, _isFallback: false };
+          result = { ...j, _isFallback: false } as ParsedBooking;
         }
       }
     } catch (e) {
@@ -136,10 +153,21 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
     // Fallback
     if (!result) {
       result = {
+        type: 'hotel',
         destination: 'your destination',
-        checkIn: '—', checkOut: '—', hotel: '—', confirmation: '—', guests: '—',
+        checkIn: '—', checkOut: '—', hotel: '—', confirmation: '—',
+        guests: null, guestNames: null, notes: null,
+        flight: {
+          flightNumber: null, airline: null, departureAirport: null,
+          arrivalAirport: null, departureTime: null, arrivalTime: null,
+          departureDate: null, arrivalDate: null, terminal: null, gate: null,
+        },
+        event: {
+          eventName: null, eventDate: null, eventTime: null,
+          venue: null, ticketType: null, ticketCount: null,
+        },
         _isFallback: true,
-      };
+      } as ParsedBooking;
     }
 
     setParsed(result);
@@ -167,8 +195,8 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
   };
 
   // ─── Build cinematic text lines ───
-  const buildTexts = (d) => {
-    const t = [];
+  const buildTexts = (d: ParsedBooking): string[] => {
+    const t: string[] = [];
     if (d?._isFallback) {
       t.push("👀 Let me look at your booking...");
       t.push("Reading the details...");
@@ -190,7 +218,7 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
       if (e.eventName) t.push(`${e.eventName} — incredible! 🎭`);
       if (e.eventDate) t.push(`Mark your calendar: ${e.eventDate} ${e.eventTime || ''} 📅`);
       if (e.venue) t.push(`At ${e.venue} 📍`);
-      if (e.ticketCount) t.push(`${e.ticketCount} ticket${e.ticketCount > 1 ? 's' : ''} for you! 🎟️`);
+      if (e.ticketCount) t.push(`${e.ticketCount} ticket${Number(e.ticketCount) > 1 ? 's' : ''} for you! 🎟️`);
     } else {
       if (d.hotel && d.hotel !== '—')
         t.push(`You'll be at ${d.hotel} — lovely! 🏠`);
@@ -198,8 +226,9 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
         t.push(`Check-in ${d.checkIn} 📅`);
       if (d.checkOut && d.checkOut !== '—')
         t.push(`Check-out ${d.checkOut} 🌴`);
-      if (d.guests && d.guests !== '—')
-        t.push(`${d.guests} — great crew! 👥`);
+      const guestCount = typeof d.guests === 'number' ? d.guests : parseInt(String(d.guests || '0'), 10);
+      if (guestCount > 0)
+        t.push(`${guestCount} — great crew! 👥`);
     }
     if (d.confirmation && d.confirmation !== '—')
       t.push(`Ref ${d.confirmation} ✅`);
@@ -209,12 +238,12 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
   };
 
   const confirmBooking = () => {
-    if (parsed) onBookingParsed?.(parsed);
+    if (parsed) onBookingParsed(parsed);
   };
 
   const applyManual = () => {
     const type = manual.type || 'hotel';
-    const base = {
+    const base: ParsedBooking = {
       ...parsed,
       type,
       destination: manual.destination,
@@ -222,9 +251,10 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
       checkOut: manual.checkOut || (type === 'event' ? manual.checkIn : ''),
       hotel: manual.hotel,
       _isManual: true,
-    };
+    } as ParsedBooking;
+    
     if (type === 'flight') {
-      base.flight = { flightNumber: manual.hotel, departureDate: manual.checkIn };
+      base.flight = { flightNumber: manual.hotel, departureDate: manual.checkIn } as any;
       if (manual.flightRoute) {
         const parts = manual.flightRoute.split('→');
         base.flight.departureAirport = (parts[0] || '').trim();
@@ -232,7 +262,7 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
       }
     }
     if (type === 'event') {
-      base.event = { eventName: manual.eventName || manual.hotel, eventDate: manual.checkIn, venue: manual.hotel };
+      base.event = { eventName: manual.eventName || manual.hotel, eventDate: manual.checkIn, venue: manual.hotel } as any;
     }
     setParsed(base);
     setManualOpen(false);
@@ -307,7 +337,7 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }) {
                 <View style={styles.manualForm}>
                   <Text style={styles.manualTitle}>Enter your booking</Text>
                   <View style={styles.typeRow}>
-                    {['hotel','flight','event'].map(t => (
+                    {(['hotel','flight','event'] as BookingType[]).map(t => (
                       <TouchableOpacity key={t} style={[styles.typeChip, manual.type === t && styles.typeChipActive]}
                         onPress={() => setManual(m => ({...m, type: t}))}>
                         <Text style={[styles.typeChipText, manual.type === t && styles.typeChipTextActive]}>

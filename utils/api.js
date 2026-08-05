@@ -1,8 +1,9 @@
 // Centralized API config
 import { supabase } from './supabase';
 
-// Base URL for all API calls
-const API_BASE = process.env.EXPO_PUBLIC_API_URL || 'https://gp-landing-rho.vercel.app';
+// Base URL for all API calls — override via EXPO_PUBLIC_API_URL env var
+// Default: the Vercel deployment of grillo-parlante-api
+const API_BASE = process.env.EXPO_PUBLIC_API_URL || 'https://grillo-parlante-api.vercel.app';
 
 /**
  * Make an authenticated API call to the backend.

@@ -1,0 +1,92 @@
+name: Frontend CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  lint-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript type check (if tsconfig exists)
+        run: |
+          if [ -f tsconfig.json ]; then
+            npx tsc --noEmit
+            echo "✅ TypeScript check passed"
+          else
+            echo "ℹ️ No tsconfig.json — skipping TypeScript check"
+          fi
+
+      - name: ESLint
+        run: |
+          if [ -f .eslintrc.js ] || [ -f .eslintrc.json ] || [ -f eslint.config.js ]; then
+            npx eslint . --ext .js,.jsx,.ts,.tsx
+            echo "✅ ESLint passed"
+          else
+            echo "ℹ️ No ESLint config — skipping"
+          fi
+
+      - name: Build for web (expo export)
+        run: npm run build
+        env:
+          EXPO_PUBLIC_API_URL: https://grillo-parlante-api.vercel.app
+
+      - name: Verify build output
+        run: |
+          if [ -d dist ] && [ -f dist/index.html ]; then
+            echo "✅ Build successful — dist/ created"
+            ls -la dist/
+          else
+            echo "❌ Build failed — no dist/ or index.html"
+            exit 1
+          fi
+
+      - name: Check for tesseract.js (should not be present)
+        run: |
+          if npm list tesseract.js 2>/dev/null | grep -q tesseract.js; then
+            echo "❌ tesseract.js found in dependencies — should be removed (server-side OCR only)"
+            exit 1
+          else
+            echo "✅ tesseract.js not in bundle"
+          fi
+
+      - name: Check for required env var usage
+        run: |
+          # Verify EXPO_PUBLIC_API_URL is used in utils/api.js
+          if grep -q "EXPO_PUBLIC_API_URL" utils/api.js; then
+            echo "✅ EXPO_PUBLIC_API_URL used in utils/api.js"
+          else
+            echo "❌ EXPO_PUBLIC_API_URL not found in utils/api.js"
+            exit 1
+          fi
+
+  # Optional: Deploy preview to Vercel on PR
+  deploy-preview:
+    needs: lint-and-build
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Vercel CLI
+        run: npm i -g vercel@latest
+      - name: Pull Vercel Environment
+        run: vercel pull --yes --environment=preview --token=${{ secrets.VERCEL_TOKEN }}
+      - name: Build Project Artifacts
+        run: vercel build --token=${{ secrets.VERCEL_TOKEN }}
+      - name: Deploy to Vercel Preview
+        run: vercel deploy --prebuilt --token=${{ secrets.VERCEL_TOKEN }}
