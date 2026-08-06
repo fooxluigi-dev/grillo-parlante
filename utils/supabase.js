@@ -1,8 +1,18 @@
 import { createClient } from '@supabase/supabase-js';
 
 // Use EXPO_PUBLIC_ env vars (Expo SDK 57 exposes these to client)
+// NOTE: NO hardcoded fallback key — if the env var is missing the app fails
+// loudly at startup instead of silently shipping an invalid key
+// (which produced "Invalid API key" on every login).
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || 'https://yfjlcdvntjtukuakhtzs.supabase.co';
-const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || 'eyJhbG...jkLE';
+const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+
+if (!supabaseAnonKey) {
+  throw new Error(
+    '[Grillo] EXPO_PUBLIC_SUPABASE_ANON_KEY non configurata: imposta la variabile ' +
+    'nel file .env o nelle env del progetto Vercel prima di compilare.'
+  );
+}
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
