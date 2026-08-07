@@ -1,12 +1,11 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
-  Image, Platform, SafeAreaView, Animated, Dimensions, TextInput
+  Image, Platform, SafeAreaView, Animated, TextInput
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import type { ParsedBooking, BookingType } from '../types';
 
-const { width: W } = Dimensions.get('window');
 // API base URL comes from EXPO_PUBLIC_API_URL env var (set in .env.local)
 const API_BASE = process.env.EXPO_PUBLIC_API_URL;
 
@@ -15,6 +14,8 @@ if (!API_BASE) {
 }
 
 const API = API_BASE ? `${API_BASE}/api/parse-booking` : 'https://grillo-parlante-api.vercel.app/api/parse-booking';
+
+const MAX_IMAGES = 3;
 
 interface ManualBookingState {
   destination: string;
@@ -32,7 +33,7 @@ interface UploadBookingScreenProps {
 }
 
 export default function UploadBookingScreen({ onClose, onBookingParsed }: UploadBookingScreenProps) {
-  const [image, setImage] = useState<string | null>(null);        // base64 data URL
+  const [images, setImages] = useState<string[]>([]);        // base64 data URLs (max 3)
   const [parsing, setParsing] = useState<boolean>(false);
   const [phase, setPhase] = useState<number>(0);            // 0=pick 1=parsing 2=result
   const [step, setStep] = useState<number>(-1);
@@ -55,7 +56,7 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }: Upload
 
   // Hidden <input type=file> mounted in the DOM (reliable on iOS Safari —
   // createElement+click() without DOM attachment often fails or hangs).
-  const fileInputRef = useRef(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     Animated.timing(contentOp, { toValue: 1, duration: 600, useNativeDriver: true }).start();
@@ -85,12 +86,34 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }: Upload
     img.src = base64;
   });
 
-  // Web: user picked a file through the hidden input
-  const handleFileChosen = async (file: File) => {
-    if (!file) return;
-    console.log('File:', file.name, file.type, (file.size / 1024).toFixed(1) + 'KB');
+  const readFileAsDataUrl = (file: File): Promise<string> => new Promise((r) => {
+    const reader = new FileReader();
+    reader.onload = () => r(reader.result as string);
+    reader.readAsDataURL(file);
+  });
 
-    // Enter the loading screen IMMEDIATELY — before reading the file —
+  // Keep payloads small enough for Vercel's 4.5MB body limit: with up to 3
+  // screenshots, cap each web image at ~1.4MB (resize/compress via canvas).
+  const maybeResize = async (dataUrl: string, budget = 1.4 * 1024 * 1024): Promise<string> => {
+    if (Platform.OS !== 'web') return dataUrl;
+    if (dataUrl.length <= budget) return dataUrl;
+    try {
+      return await resizeImage(dataUrl, 1600);
+    } catch (e) {
+      console.log('Resize failed, sending original:', (e as Error)?.message);
+      return dataUrl;
+    }
+  };
+
+  // Web: user picked file(s) through the hidden input
+  const handleFilesChosen = async (files: File[]) => {
+    if (!files.length) return;
+    const selected = files.slice(0, MAX_IMAGES);
+    if (files.length > MAX_IMAGES) {
+      console.warn(`Selected ${files.length} files — keeping the first ${MAX_IMAGES}`);
+    }
+
+    // Enter the loading screen IMMEDIATELY — before reading the files —
     // so the user always sees feedback right after picking.
     setParsing(true);
     setPhase(1);
@@ -104,27 +127,16 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }: Upload
     ]).start();
 
     try {
-      let dataUrl = await new Promise<string>((r) => {
-        const reader = new FileReader();
-        reader.onload = () => r(reader.result as string);
-        reader.readAsDataURL(file);
-      });
-
-      // Only resize when the payload risks hitting Vercel's 4.5MB body limit.
-      // readAsDataURL puro + server-side Sharp is the reliable path (canvas corrupts on iOS).
-      if (dataUrl.length > 3.5 * 1024 * 1024) {
-        try {
-          dataUrl = await resizeImage(dataUrl, 1600);
-        } catch (e) {
-          console.log('Resize failed, sending original:', (e as Error)?.message);
-        }
+      const urls: string[] = [];
+      for (const file of selected) {
+        const dataUrl = await readFileAsDataUrl(file);
+        urls.push(await maybeResize(dataUrl));
       }
-
-      setImage(dataUrl);
-      await parseImage(dataUrl);
+      setImages(urls);
+      await parseImages(urls);
     } catch (e) {
       console.error('File read error:', e);
-      setError('Could not read that file. Try a PNG or JPEG screenshot.');
+      setError('Could not read those files. Try PNG or JPEG screenshots.');
       setParsing(false);
       setPhase(0);
     }
@@ -141,35 +153,41 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }: Upload
         const el = document.createElement('input');
         el.type = 'file';
         el.accept = 'image/*';
+        el.multiple = true;
         el.style.position = 'fixed';
         el.style.opacity = '0';
         el.style.pointerEvents = 'none';
         document.body.appendChild(el);
         el.onchange = (e) => {
-          const f = (e.target as HTMLInputElement).files?.[0];
+          const files = Array.from((e.target as HTMLInputElement).files || []);
           document.body.removeChild(el);
-          if (f) handleFileChosen(f);
+          if (files.length) handleFilesChosen(files);
         };
         el.click();
       }
     } else {
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['images'], quality: 0.5, base64: true,
+        mediaTypes: ['images'],
+        quality: 0.4,
+        base64: true,
+        allowsMultipleSelection: true,
+        selectionLimit: MAX_IMAGES,
+        orderedSelection: true,
       });
       if (result.canceled || !result.assets?.length) return;
-      const dataUrl = `data:image/jpeg;base64,${result.assets[0].base64}`;
+      const urls = result.assets.slice(0, MAX_IMAGES).map(a => `data:image/jpeg;base64,${a.base64}`);
       setParsing(true);
       setPhase(1);
       setStep(0);
       setError('');
       setTextIdx(-1);
-      setImage(dataUrl);
-      parseImage(dataUrl);
+      setImages(urls);
+      parseImages(urls);
     }
   };
 
-  // ─── Parse: send image → API (server handles OCR + parsing) ───
-  const parseImage = async (dataUrl: string) => {
+  // ─── Parse: send images → API (server handles OCR + parsing) ───
+  const parseImages = async (dataUrls: string[]) => {
     setParsing(true);
     setPhase(1);
     setStep(0);
@@ -191,7 +209,7 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }: Upload
         resp = await fetch(API, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ images: [dataUrl] }),
+          body: JSON.stringify({ images: dataUrls }),
           signal: controller.signal,
         });
       } finally {
@@ -313,6 +331,25 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }: Upload
     if (parsed) onBookingParsed(parsed);
   };
 
+  // Open the editable form pre-filled from the parsed (or fallback) booking
+  const openManual = () => {
+    if (!parsed) return;
+    const type: BookingType = parsed.type || 'hotel';
+    const f = (parsed.flight || {}) as any;
+    const e = (parsed.event || {}) as any;
+    const clean = (v: any) => (v && v !== '—' && v !== 'your destination' ? v : '');
+    setManual({
+      destination: clean(parsed.destination),
+      checkIn: clean(parsed.checkIn) || clean(f.departureDate) || clean(e.eventDate),
+      checkOut: clean(parsed.checkOut),
+      hotel: clean(f.flightNumber) || clean(parsed.hotel),
+      type,
+      eventName: clean(e.eventName) || clean(parsed.hotel),
+      flightRoute: [f.departureAirport, f.arrivalAirport].filter(Boolean).join(' → '),
+    });
+    setManualOpen(true);
+  };
+
   const applyManual = () => {
     const type = manual.type || 'hotel';
     const base: ParsedBooking = {
@@ -341,7 +378,6 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }: Upload
   };
 
   // ─── Render ───
-  const maxH = W * 1.25;
 
   return (
     <View style={styles.root}>
@@ -351,10 +387,11 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }: Upload
           ref={fileInputRef}
           type="file"
           accept="image/*"
+          multiple
           style={{ display: 'none' }}
           onChange={(e) => {
-            const f = (e.target as HTMLInputElement).files?.[0];
-            if (f) handleFileChosen(f);
+            const files = Array.from((e.target as HTMLInputElement).files || []);
+            if (files.length) handleFilesChosen(files);
           }}
         />
       )}
@@ -367,13 +404,17 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }: Upload
 
         {phase === 0 && (
           <Animated.View style={[styles.pickArea, { opacity: contentOp }]}>
-            <Text style={styles.pickTitle}>Upload your booking screenshot</Text>
-            <Text style={styles.pickSub}>I'll read the details and create a custom itinerary</Text>
+            <Text style={styles.pickTitle}>Upload your booking screenshots</Text>
+            <Text style={styles.pickSub}>I'll read the details and create a custom itinerary — up to 3 screenshots</Text>
             <TouchableOpacity style={styles.pickBtn} onPress={pick}>
-              <Text style={styles.pickBtnText}>📸 Choose image</Text>
+              <Text style={styles.pickBtnText}>📸 Choose screenshots</Text>
             </TouchableOpacity>
-            {image && (
-              <Image source={{ uri: image }} style={[styles.preview, { maxHeight: maxH }]} resizeMode="contain" />
+            {images.length > 0 && (
+              <View style={styles.previewRow}>
+                {images.map((u, i) => (
+                  <Image key={i} source={{ uri: u }} style={styles.previewThumb} resizeMode="cover" />
+                ))}
+              </View>
             )}
           </Animated.View>
         )}
@@ -423,9 +464,11 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }: Upload
                 {parsed._isFallback ? '⚠️ Could not read screenshot' : '✅ Booking detected'}
               </Text>
 
-              {parsed._isFallback && !manualOpen && (
-                <TouchableOpacity style={styles.manualBtn} onPress={() => setManualOpen(true)}>
-                  <Text style={styles.manualBtnText}>✏️ Enter details manually</Text>
+              {!manualOpen && (
+                <TouchableOpacity style={styles.manualBtn} onPress={openManual}>
+                  <Text style={styles.manualBtnText}>
+                    {parsed._isFallback ? '✏️ Enter details manually' : '✏️ Edit extracted details'}
+                  </Text>
                 </TouchableOpacity>
               )}
 
@@ -546,7 +589,8 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: 'rgba(232,168,50,0.3)',
   },
   pickBtnText: { fontSize: 16, fontWeight: '700', color: 'rgba(232,168,50,0.9)' },
-  preview: { width: '100%', borderRadius: 12, marginTop: 24, backgroundColor: 'rgba(255,255,255,0.05)' },
+  previewRow: { flexDirection: 'row', gap: 8, marginTop: 24, justifyContent: 'center' },
+  previewThumb: { width: 96, height: 96, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.05)' },
 
   parseCard: {
     backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: 20, marginHorizontal: 24, marginTop: 40,
