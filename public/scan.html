@@ -168,7 +168,7 @@ header h1 { font-size: 16px; font-weight: 600; color: rgba(232,168,50,0.9); }
 </style>
 
 <script>
-const API = 'https://gp-landing-rho.vercel.app/api';
+const API = 'https://grillo-parlante-api.vercel.app/api';
 let currentBooking = null;
 let currentImage = null;
 
@@ -367,11 +367,23 @@ async function generateItinerary() {
     if (resp.ok) {
       const data = await resp.json();
       showItinerary(data);
+    } else {
+      // Never leave the button stuck on "Creating..." — re-enable it and
+      // surface the actual server error instead of failing silently.
+      let detail = '';
+      try { detail = await resp.text(); } catch {}
+      log(`Itinerary error HTTP ${resp.status}: ${detail.slice(0, 300)}`);
+      document.getElementById('generateBtn').disabled = false;
+      document.getElementById('generateBtn').textContent = '✨ Create my itinerary';
+      document.getElementById('error').classList.remove('hidden');
+      document.getElementById('error').textContent = `Could not generate the itinerary (server error ${resp.status}). Try again?`;
     }
   } catch (e) {
     log(`Itinerary error: ${e.message}`);
     document.getElementById('generateBtn').disabled = false;
     document.getElementById('generateBtn').textContent = '✨ Create my itinerary';
+    document.getElementById('error').classList.remove('hidden');
+    document.getElementById('error').textContent = 'Could not reach the server. Check your connection and try again.';
   }
 }
 

@@ -1,6 +1,6 @@
-// AI-powered itinerary generator — calls DeepSeek via Vercel API
+// AI-powered itinerary generator — calls DeepSeek via the Grillo API (apiCall + API_ENDPOINTS)
 
-const ITINERARY_API = 'https://gp-landing-rho.vercel.app/api/itinerary';
+import { apiCall, API_ENDPOINTS } from './api';
 
 // Fallback: generate a basic template itinerary if the API fails
 function parseDate(str, year) {
@@ -130,9 +130,8 @@ export async function generateItinerary(trip) {
   const co = checkOut || end_date || '';
 
   try {
-    const res = await fetch(ITINERARY_API, {
+    const res = await apiCall(API_ENDPOINTS.ITINERARY, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         destination,
         checkIn: ci,
@@ -143,7 +142,11 @@ export async function generateItinerary(trip) {
     });
 
     if (!res.ok) {
-      console.warn('Itinerary API error, using fallback');
+      // Log the actual error instead of silently falling back, so callers can
+      // surface why generation failed (and never get stuck on "Creating…").
+      let detail = '';
+      try { detail = (await res.text()).slice(0, 300); } catch {}
+      console.warn(`Itinerary API error (HTTP ${res.status}): ${detail}`);
       return fallbackItinerary(trip);
     }
 
