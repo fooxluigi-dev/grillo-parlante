@@ -4,9 +4,7 @@ import {
   FlatList, KeyboardAvoidingView, Platform, ActivityIndicator
 } from 'react-native';
 import { Colors } from '../theme/colors';
-
-// ⚡ Grillo API proxy (via Vercel)
-const API_URL = 'https://gp-landing-rho.vercel.app/api/chat';
+import { apiCall, API_ENDPOINTS } from '../utils/api';
 
 const WELCOME = {
   id: '0',
@@ -29,9 +27,8 @@ export default function ChatScreen({ route }) {
         content: m.text,
       }));
 
-      const res = await fetch(API_URL, {
+      const res = await apiCall(API_ENDPOINTS.CHAT, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           messages: apiMessages,
           tripContext: trip
@@ -41,7 +38,18 @@ export default function ChatScreen({ route }) {
       });
 
       const data = await res.json();
-      const reply = data.reply || '🦗 Sorry, I couldn\'t process that. Try again!';
+      if (!res.ok) {
+        // New API requires auth — surface it instead of a generic failure
+        const authReply = res.status === 401
+          ? '🔒 Devi effettuare l\'accesso per chattare con Grillo.'
+          : `🦗 Errore del server (${res.status}). Riprova!`;
+        setMessages(prev => [...prev, {
+          id: (Date.now() + 1).toString(), role: 'grillo', text: authReply,
+        }]);
+        setLoading(false);
+        return;
+      }
+      const reply = data.reply || data.choices?.[0]?.message?.content || '🦗 Sorry, I couldn\'t process that. Try again!';
 
       setMessages(prev => [...prev, {
         id: (Date.now() + 1).toString(), role: 'grillo', text: reply,

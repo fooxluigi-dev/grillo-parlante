@@ -4,8 +4,7 @@ import {
   FlatList, KeyboardAvoidingView, Platform, ActivityIndicator, SafeAreaView
 } from 'react-native';
 import { Colors } from '../theme/colors';
-
-const API_URL = 'https://gp-landing-rho.vercel.app/api/chat';
+import { apiCall, API_ENDPOINTS } from '../utils/api';
 
 const WELCOME = {
   id: '0', role: 'grillo',
@@ -27,16 +26,23 @@ export default function ChatModal({ onClose }) {
     setLoading(true);
 
     try {
-      const res = await fetch(API_URL, {
+      const res = await apiCall(API_ENDPOINTS.CHAT, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           messages: all.map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.text })),
           tripContext: 'Split, Croatia (August)',
         }),
       });
       const data = await res.json();
-      setMessages(prev => [...prev, { id: (Date.now() + 1).toString(), role: 'grillo', text: data.reply || '🦗 Sorry!' }]);
+      if (!res.ok) {
+        const authReply = res.status === 401
+          ? '🔒 Devi effettuare l\'accesso per chattare con Grillo.'
+          : `🦗 Errore del server (${res.status}). Riprova!`;
+        setMessages(prev => [...prev, { id: (Date.now() + 1).toString(), role: 'grillo', text: authReply }]);
+        setLoading(false);
+        return;
+      }
+      setMessages(prev => [...prev, { id: (Date.now() + 1).toString(), role: 'grillo', text: data.reply || data.choices?.[0]?.message?.content || '🦗 Sorry!' }]);
     } catch {
       setMessages(prev => [...prev, { id: (Date.now() + 1).toString(), role: 'grillo', text: '🦗 Connection issue. Try again! 🌍' }]);
     }
