@@ -142,7 +142,7 @@ function GrilloWorkshop({ booking }) {
   );
 }
 
-export default function HomeScreen() {
+export default function HomeScreen({ pendingBooking: incomingBooking, onPendingBookingConsumed }) {
   const { currentUser } = useContext(AuthContext);
   const navigation = useNavigation();
   const [showUpload, setShowUpload] = useState(false);
@@ -168,6 +168,17 @@ export default function HomeScreen() {
     });
     return unsub;
   }, [userId, navigation]);
+
+  // Consume a booking parsed on the Landing screen (signed-out flow): after
+  // sign-up/login this fires once and opens the preference quiz, which then
+  // generates the itinerary — fixing the "booking lost after signup" bug.
+  useEffect(() => {
+    if (incomingBooking && !showQuiz && !loadingItinerary) {
+      setPendingBooking(incomingBooking);
+      setShowQuiz(true);
+      onPendingBookingConsumed?.();
+    }
+  }, [incomingBooking, showQuiz, loadingItinerary, onPendingBookingConsumed]);
 
   const onRefresh = async () => {
     setRefreshing(true);

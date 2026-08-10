@@ -642,7 +642,7 @@ function VoidDemo({ trigger, onComplete }) {
 }
 
 // ─── MAIN ───
-export default function LandingScreen({ navigation, onLogin, onSignUp }) {
+export default function LandingScreen({ navigation, onLogin, onSignUp, onBookingPending }) {
   const { isLoggedIn } = useContext(AuthContext);
   const [scrollY, setScrollY] = useState(0);
   const [sceneIdx, setSceneIdx] = useState(0);
@@ -655,6 +655,9 @@ export default function LandingScreen({ navigation, onLogin, onSignUp }) {
 
   const handleBookingParsed = (booking) => {
     setShowUpload(false);
+    // Pass the parsed booking up so it survives the sign-up/login switch and
+    // HomeScreen can generate the itinerary right after auth.
+    onBookingPending?.(booking);
     // On the landing screen the user is always signed out — open SIGN-UP directly.
     // Note: `onSignUp?.() || onLogin?.()` would call BOTH (undefined return value),
     // and onLogin resets the mode to 'signin' — hence the explicit if/else.

@@ -26,7 +26,7 @@ const TAB_ICONS = {
   Profile: { focused: '👤', unfocused: '🙋' },
 };
 
-function TabNavigator() {
+function TabNavigator({ pendingBooking, onPendingBookingConsumed }) {
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
@@ -49,7 +49,15 @@ function TabNavigator() {
         headerShown: false,
       })}
     >
-      <Tab.Screen name="Home" component={HomeScreen} />
+      <Tab.Screen name="Home">
+        {(props) => (
+          <HomeScreen
+            {...props}
+            pendingBooking={pendingBooking}
+            onPendingBookingConsumed={onPendingBookingConsumed}
+          />
+        )}
+      </Tab.Screen>
       <Tab.Screen name="Trips" component={TripsScreen} />
       <Tab.Screen name="Chat" component={ChatScreen} />
       <Tab.Screen name="Profile" component={ProfileScreen} />
@@ -86,6 +94,9 @@ export default function App() {
 
   const isLoggedIn = !!session;
   const [loginMode, setLoginMode] = useState('signin'); // 'signin' | 'signup'
+  // Booking parsed on the Landing screen (signed-out flow): survives the
+  // sign-up/login switch so HomeScreen can run the quiz + itinerary generation.
+  const [pendingBooking, setPendingBooking] = useState(null);
 
   // Sign up / Sign in with Supabase
   const login = useCallback(async ({ email, password, name, isSignUp }) => {
@@ -127,7 +138,14 @@ export default function App() {
           <Stack.Navigator screenOptions={{ headerShown: false }}>
             {isLoggedIn ? (
               <>
-              <Stack.Screen name="Main" component={TabNavigator} />
+              <Stack.Screen name="Main">
+                {() => (
+                  <TabNavigator
+                    pendingBooking={pendingBooking}
+                    onPendingBookingConsumed={() => setPendingBooking(null)}
+                  />
+                )}
+              </Stack.Screen>
               <Stack.Screen name="TripDetail" component={TripDetailScreen} />
               </>
             ) : (
@@ -136,6 +154,7 @@ export default function App() {
                   <LandingScreen
                     onLogin={() => { setLoginMode('signin'); setShowLogin(true); }}
                     onSignUp={() => { setLoginMode('signup'); setShowLogin(true); }}
+                    onBookingPending={setPendingBooking}
                   />
                 )}
               </Stack.Screen>
