@@ -151,6 +151,7 @@ export default function HomeScreen({ pendingBooking: incomingBooking, onPendingB
   const [pendingBooking, setPendingBooking] = useState(null);
   const [showQuiz, setShowQuiz] = useState(false);
   const [loadingItinerary, setLoadingItinerary] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
   const [refreshing, setRefreshing] = useState(false);
 
   const userId = currentUser?.id;
@@ -292,10 +293,18 @@ export default function HomeScreen({ pendingBooking: incomingBooking, onPendingB
       setLoadingItinerary(false);
       setPendingBooking(null);
 
-      // Try to navigate with error info
+      const msg = e?.message || 'Unknown error';
+      const isAuth = msg.includes('401') || msg.includes('Session expired');
+      const errorMsg = isAuth
+        ? '🔒 Please sign in to generate itineraries.'
+        : `❌ Could not generate itinerary (${msg}). Please try again.`;
+
       if (Platform.OS === 'web') {
-        alert('Could not generate itinerary. Please try again.');
+        alert(errorMsg);
         navigation.navigate('Home');
+      } else {
+        // On mobile, set an error state so the user sees what happened
+        setErrorMsg(errorMsg);
       }
     }
   };
@@ -441,6 +450,16 @@ export default function HomeScreen({ pendingBooking: incomingBooking, onPendingB
       {/* Loading overlay - Grillo's workshop */}
       {loadingItinerary && <GrilloWorkshop booking={pendingBooking} />}
 
+      {/* Error banner */}
+      {!!errorMsg && (
+        <View style={styles.errorBanner}>
+          <Text style={styles.errorBannerText}>{errorMsg}</Text>
+          <TouchableOpacity onPress={() => setErrorMsg('')} style={styles.errorBannerClose}>
+            <Text style={styles.errorBannerCloseText}>✕</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
     </View>
   );
 }
@@ -538,6 +557,22 @@ const styles = StyleSheet.create({
   woProgressFill: { height: '100%', borderRadius: 1.5, backgroundColor: 'rgba(232,168,50,0.6)' },
   woThought: { fontSize: 12, color: 'rgba(255,255,255,0.4)', textAlign: 'center', fontStyle: 'italic', marginBottom: 16, lineHeight: 17, paddingHorizontal: 8 },
   woHint: { fontSize: 11, color: 'rgba(255,255,255,0.25)', textAlign: 'center' },
+
+  // Error banner
+  errorBanner: {
+    backgroundColor: '#cc3333',
+    marginHorizontal: 16,
+    marginVertical: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  errorBannerText: { fontSize: 13, color: '#fff', flex: 1 },
+  errorBannerClose: { paddingHorizontal: 8 },
+  errorBannerCloseText: { fontSize: 16, color: '#fff', fontWeight: '700' },
 
   // Smart Tips
   tipsSection: { marginBottom: 20 },
