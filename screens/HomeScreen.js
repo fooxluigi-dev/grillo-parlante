@@ -1,6 +1,6 @@
 import React, { useContext, useState, useEffect, useRef } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, ScrollView, Platform, Alert, Modal, RefreshControl, Animated
+  View, Text, StyleSheet, TouchableOpacity, ScrollView, Platform, Alert, Modal, RefreshControl, Animated,
 } from 'react-native';
 import { Colors } from '../theme/colors';
 import { AuthContext } from '../context/AuthContext';
@@ -142,6 +142,48 @@ function GrilloWorkshop({ booking }) {
   );
 }
 
+// ─── Celebration Overlay — "The Dream Trip Is Ready" ───
+function CelebrationOverlay() {
+  const pulse = useRef(new Animated.Value(1)).current;
+  const glow = useRef(new Animated.Value(0.3)).current;
+  const op = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(op, { toValue: 1, duration: 600, useNativeDriver: true }),
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulse, { toValue: 1.06, duration: 800, useNativeDriver: true }),
+          Animated.timing(pulse, { toValue: 1, duration: 800, useNativeDriver: true }),
+        ])
+      ),
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(glow, { toValue: 0.7, duration: 1200, useNativeDriver: false }),
+          Animated.timing(glow, { toValue: 0.3, duration: 1200, useNativeDriver: false }),
+        ])
+      ),
+    ]).start();
+  }, []);
+
+  return (
+    <Animated.View style={[styles.celebOverlay, { opacity: op }]}>
+      <Animated.View style={[styles.celebCard, { transform: [{ scale: pulse }] }]}>
+        <Animated.View style={[styles.celebIconWrap, { backgroundColor: `rgba(232,168,50,${glow})` }]}>
+          <Text style={styles.celebIcon}>🦗</Text>
+        </Animated.View>
+        <Text style={styles.celebTitle}>The Dream Trip Is Ready</Text>
+        <Text style={styles.celebSub}>Grillo crafted your itinerary ✨</Text>
+        <View style={styles.celebDots}>
+          {[0, 1, 2].map(i => (
+            <Animated.View key={i} style={[styles.celebDot, { opacity: glow }]} />
+          ))}
+        </View>
+      </Animated.View>
+    </Animated.View>
+  );
+}
+
 export default function HomeScreen({ pendingBooking: incomingBooking, onPendingBookingConsumed }) {
   const { currentUser } = useContext(AuthContext);
   const navigation = useNavigation();
@@ -151,6 +193,7 @@ export default function HomeScreen({ pendingBooking: incomingBooking, onPendingB
   const [pendingBooking, setPendingBooking] = useState(null);
   const [showQuiz, setShowQuiz] = useState(false);
   const [loadingItinerary, setLoadingItinerary] = useState(false);
+  const [showCelebration, setShowCelebration] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [refreshing, setRefreshing] = useState(false);
 
@@ -268,13 +311,35 @@ export default function HomeScreen({ pendingBooking: incomingBooking, onPendingB
 
       setLoadingItinerary(false);
       setPendingBooking(null);
+
+      // Show celebration while we wait for the trip data to load
+      setShowCelebration(true);
+
+      // Wait for the trip to actually appear in the database
+      let fetchedTrip = null;
+      let retries = 0;
+      const maxRetries = 15; // up to ~7.5s
+      while (retries < maxRetries) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        const trips = await SupabaseTrips.getAll(userId);
+        if (trips.length > 0) {
+          fetchedTrip = trips[0];
+          break;
+        }
+        retries++;
+      }
+
+      setUpcomingTrip(fetchedTrip || null);
+      setTripCount(prev => prev + 1);
+      setShowCelebration(false);
       await loadTrips();
 
       // Navigate to TripDetail with data
       if (Platform.OS === 'web') {
-        if (savedTrip) {
-          navigation.getParent()?.navigate('TripDetail', { tripId: savedTrip.id }) ||
-          navigation.navigate('TripDetail', { tripId: savedTrip.id });
+        if (fetchedTrip) {
+          setTimeout(() => {
+            navigation.navigate('TripDetail', { tripId: fetchedTrip.id });
+          }, 1500);
         } else {
           // Fallback: pass itinerary directly
           navigation.navigate('TripDetail', {
@@ -447,8 +512,12 @@ export default function HomeScreen({ pendingBooking: incomingBooking, onPendingB
         <PreferenceQuiz onSubmit={handleQuizComplete} onSkip={() => handleQuizComplete({})} />
       </Modal>
 
-      {/* Loading overlay - Grillo's workshop */}
-      {loadingItinerary && <GrilloWorkshop booking={pendingBooking} />}
+      {/* Loading overlay - Grillo's workshop (Modal ensures it renders above all other layers) */}
+      {loadingItinerary && (
+        <Modal visible={loadingItinerary} animationType="none" transparent>
+          <GrilloWorkshop booking={pendingBooking} />
+        </Modal>
+      )}
 
       {/* Error banner */}
       {!!errorMsg && (
@@ -459,6 +528,9 @@ export default function HomeScreen({ pendingBooking: incomingBooking, onPendingB
           </TouchableOpacity>
         </View>
       )}
+
+      {/* Celebration overlay — "The Dream Trip Is Ready" */}
+      {showCelebration && <CelebrationOverlay />}
 
     </View>
   );
@@ -585,4 +657,29 @@ const styles = StyleSheet.create({
   tipIcon: { fontSize: 24, marginBottom: 8 },
   tipTitle: { fontSize: 14, fontWeight: '700', color: '#fff', marginBottom: 4 },
   tipDesc: { fontSize: 12, color: 'rgba(255,255,255,0.5)', lineHeight: 16 },
+
+  // Celebration
+  celebOverlay: {
+    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.9)',
+    justifyContent: 'center', alignItems: 'center',
+    zIndex: 2000,
+  },
+  celebCard: {
+    backgroundColor: '#1a1a1a', borderRadius: 28, padding: 40, paddingTop: 36,
+    alignItems: 'center', width: '85%', maxWidth: 340,
+    borderWidth: 1, borderColor: 'rgba(232,168,50,0.2)',
+  },
+  celebIconWrap: {
+    width: 80, height: 80, borderRadius: 40,
+    alignItems: 'center', justifyContent: 'center', marginBottom: 16,
+    borderWidth: 1, borderColor: 'rgba(232,168,50,0.2)',
+  },
+  celebIcon: { fontSize: 48 },
+  celebTitle: { fontSize: 22, fontWeight: '800', color: Colors.gold, textAlign: 'center', marginBottom: 6 },
+  celebSub: { fontSize: 13, color: 'rgba(255,255,255,0.5)', textAlign: 'center', marginBottom: 20 },
+  celebDots: { flexDirection: 'row', gap: 8 },
+  celebDot: {
+    width: 8, height: 8, borderRadius: 4, backgroundColor: Colors.gold,
+  },
 });

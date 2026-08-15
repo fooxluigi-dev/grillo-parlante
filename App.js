@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { SafeAreaView, StatusBar, ActivityIndicator, View, Modal, Text } from 'react-native';
+import { SafeAreaView, StatusBar, ActivityIndicator, View, Modal, Text, Alert } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import * as Linking from 'expo-linking';
 import { supabase } from './utils/supabase';
 import TopoBackground from './components/TopoBackground';
 
@@ -12,6 +13,7 @@ import ChatScreen from './screens/ChatScreen';
 import ProfileScreen from './screens/ProfileScreen';
 import TripDetailScreen from './screens/TripDetailScreen';
 import LoginScreen from './screens/LoginScreen';
+import ResetPasswordScreen from './screens/ResetPasswordScreen';
 import LandingScreen from './screens/LandingScreen';
 import { AuthContext } from './context/AuthContext';
 import { Colors } from './theme/colors';
@@ -97,22 +99,90 @@ export default function App() {
   // Booking parsed on the Landing screen (signed-out flow): survives the
   // sign-up/login switch so HomeScreen can run the quiz + itinerary generation.
   const [pendingBooking, setPendingBooking] = useState(null);
+  // True when Supabase requires email confirmation and the user must check
+  // their inbox before the session starts. LoginScreen shows a "check email"
+  // state instead of closing silently with the user still logged out.
+  const [needsVerification, setNeedsVerification] = useState(false);
+  // True when the user arrived via a "recover password" deep link / email link.
+  const [showResetPassword, setShowResetPassword] = useState(false);
+  // Email used at signup (for the "check your inbox" resend button).
+  const [lastSignupEmail, setLastSignupEmail] = useState('');
 
-  // Sign up / Sign in with Supabase
+  // Deep links for the web flow: Supabase appends #access_token=...&type=recovery
+  // to the redirect URL. detectSessionInUrl handles the token; we only need to
+  // react to the PASSWORD_RECOVERY event (see onAuthStateChange below).
+  useEffect(() => {
+    const sub = supabase.auth.onAuthStateChange((event, sess) => {
+      setSession(sess);
+      if (event === 'PASSWORD_RECOVERY') {
+        setShowResetPassword(true);
+      }
+      if (event === 'SIGNED_IN') {
+        setNeedsVerification(false);
+        setShowResetPassword(false);
+        setShowLogin(false);
+      }
+      if (event === 'SIGNED_OUT') {
+        setNeedsVerification(false);
+        setShowResetPassword(false);
+      }
+    });
+    return () => sub?.data?.subscription?.unsubscribe?.();
+  }, []);
+
+  // Sign up / Sign in with Supabase.
+  // On signup, if Supabase requires email confirmation the returned session is
+  // null: we leave the LoginScreen open in "verify your email" mode instead of
+  // pretending the user is logged in.
   const login = useCallback(async ({ email, password, name, isSignUp }) => {
     if (isSignUp) {
-      const { error } = await supabase.auth.signUp({
+      const { data, error } = await supabase.auth.signUp({
         email,
         password,
         options: { data: { name } },
       });
       if (error) throw error;
-      // After signup, user needs to verify email OR is auto-confirmed
-      // We'll auto sign them in for now
-    } else {
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) throw error;
+      if (data?.session) {
+        // Auto-confirmed (email confirmation disabled on the project): logged in.
+        setNeedsVerification(false);
+        setShowLogin(false);
+      } else {
+        // Email confirmation required: keep the modal open and tell the user.
+        setLastSignupEmail(email);
+        setNeedsVerification(true);
+      }
+      return;
     }
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) throw error;
+    setShowLogin(false);
+  }, []);
+
+  // Re-send the confirmation email for the signup flow.
+  const resendVerification = useCallback(async (email) => {
+    const { error } = await supabase.auth.resend({
+      type: 'signup',
+      email,
+      options: { emailRedirectTo: Linking.createURL('/') },
+    });
+    if (error) throw error;
+  }, []);
+
+  // Send the "reset your password" email.
+  const requestPasswordReset = useCallback(async (email) => {
+    const redirect = Linking.createURL('/');
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: redirect,
+    });
+    if (error) throw error;
+  }, []);
+
+  // Apply a new password (called from ResetPasswordScreen after the user
+  // followed the recovery link).
+  const updatePassword = useCallback(async (newPassword) => {
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    if (error) throw error;
+    setShowResetPassword(false);
     setShowLogin(false);
   }, []);
 
@@ -164,7 +234,23 @@ export default function App() {
 
         {/* Login Modal — signup by default (user just arrived from the upload flow) */}
         <Modal visible={showLogin} animationType="slide" transparent={true} onRequestClose={() => setShowLogin(false)}>
-          <LoginScreen onLogin={login} onClose={() => setShowLogin(false)} initialMode={loginMode} />
+          <LoginScreen
+            onLogin={login}
+            onClose={() => { setShowLogin(false); setNeedsVerification(false); }}
+            initialMode={loginMode}
+            needsVerification={needsVerification}
+            verificationEmail={lastSignupEmail}
+            onResendVerification={resendVerification}
+            onForgotPassword={requestPasswordReset}
+          />
+        </Modal>
+
+        {/* Reset Password Modal — shown after the user follows the recovery link */}
+        <Modal visible={showResetPassword} animationType="slide" transparent={true} onRequestClose={() => setShowResetPassword(false)}>
+          <ResetPasswordScreen
+            onUpdatePassword={updatePassword}
+            onClose={() => setShowResetPassword(false)}
+          />
         </Modal>
       </SafeAreaView>
       </View>
