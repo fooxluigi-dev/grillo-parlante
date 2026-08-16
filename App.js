@@ -130,6 +130,34 @@ export default function App() {
     return () => sub?.data?.subscription?.unsubscribe?.();
   }, []);
 
+  // Robust deep-link handling (web + native). Supabase appends
+  // #access_token=...&type=recovery to the redirect URL. The SDK's
+  // detectSessionInUrl handles the session, but on some platforms the
+  // PASSWORD_RECOVERY event doesn't fire on cold start — so we also parse
+  // the URL ourselves and open the reset screen based on type=recovery.
+  useEffect(() => {
+    const looksLikeRecovery = (url) => {
+      try {
+        return url.includes('type=recovery') || /[#&]type=recovery/.test(url);
+      } catch {
+        return false;
+      }
+    };
+    const checkInitialUrl = () => {
+      const url = Linking.getInitialURL();
+      if (url && looksLikeRecovery(url)) {
+        setTimeout(() => setShowResetPassword(true), 300);
+      }
+    };
+    checkInitialUrl();
+    const listener = Linking.addEventListener('url', ({ url }) => {
+      if (looksLikeRecovery(url)) {
+        setShowResetPassword(true);
+      }
+    });
+    return () => listener.remove();
+  }, []);
+
   // Sign up / Sign in with Supabase.
   // On signup, if Supabase requires email confirmation the returned session is
   // null: we leave the LoginScreen open in "verify your email" mode instead of
