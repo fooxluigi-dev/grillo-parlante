@@ -14,6 +14,12 @@ if (!supabaseAnonKey) {
   );
 }
 
+// Capture the very first URL BEFORE the client is constructed: supabase-js
+// strips #access_token/type=recovery tokens from the URL during client
+// initialization, so any later read (useEffect) misses the recovery flag.
+export const INITIAL_URL =
+  typeof window !== 'undefined' && window.location ? window.location.href : '';
+
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
     persistSession: true,

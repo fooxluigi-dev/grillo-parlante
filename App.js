@@ -4,7 +4,7 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import * as Linking from 'expo-linking';
-import { supabase } from './utils/supabase';
+import { supabase, INITIAL_URL } from './utils/supabase';
 import TopoBackground from './components/TopoBackground';
 
 import HomeScreen from './screens/HomeScreen';
@@ -138,16 +138,23 @@ export default function App() {
   useEffect(() => {
     const looksLikeRecovery = (url) => {
       try {
-        return url.includes('type=recovery') || /[#&]type=recovery/.test(url);
+        return /[#&]type=recovery/.test(url);
       } catch {
         return false;
       }
     };
     const checkInitialUrl = () => {
-      const url = Linking.getInitialURL();
-      if (url && looksLikeRecovery(url)) {
+      // Web: INITIAL_URL was captured before supabase-js stripped the hash.
+      if (INITIAL_URL && looksLikeRecovery(INITIAL_URL)) {
         setTimeout(() => setShowResetPassword(true), 300);
+        return;
       }
+      // Native: ask expo-linking for the launch URL.
+      Linking.getInitialURL().then((url) => {
+        if (url && looksLikeRecovery(url)) {
+          setTimeout(() => setShowResetPassword(true), 300);
+        }
+      }).catch(() => {});
     };
     checkInitialUrl();
     const listener = Linking.addEventListener('url', ({ url }) => {
