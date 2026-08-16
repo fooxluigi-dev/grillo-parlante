@@ -133,40 +133,61 @@ export default function App() {
     return () => sub?.data?.subscription?.unsubscribe?.();
   }, []);
 
-  // Robust deep-link handling (web + native). Supabase appends
-  // #access_token=...&type=recovery to the redirect URL. The SDK's
-  // detectSessionInUrl handles the session, but on some platforms the
-  // PASSWORD_RECOVERY event doesn't fire on cold start — so we also parse
-  // the URL ourselves and open the reset screen based on type=recovery.
-  useEffect(() => {
-    const looksLikeRecovery = (url) => {
+  // Robust recovery-link handling (deterministic, no event-order reliance).
+// When the user clicks the reset-password email link, Supabase redirects to
+// the app with #access_token=...&type=recovery. We parse those tokens OURSELVES
+// and call setSession() explicitly, then open the reset screen. This works
+// even when the SDK's detectSessionInUrl / PASSWORD_RECOVERY event ordering is
+// unreliable (which is exactly what we observed on React Native Web).
+useEffect(() => {
+  const fragment = INITIAL_URL.includes('#')
+    ? INITIAL_URL.slice(INITIAL_URL.indexOf('#'))
+    : '';
+
+  const isRecovery = fragment.includes('type=recovery');
+
+  async function applyRecovery() {
+    const params = new URLSearchParams(fragment.replace(/^#/, ''));
+    const accessToken = params.get('access_token');
+    const refreshToken = params.get('refresh_token');
+    const expiresAt = Number(params.get('expires_at')) || 0;
+    if (accessToken && refreshToken) {
       try {
-        return /[#&]type=recovery/.test(url);
-      } catch {
-        return false;
+        await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken });
+        await supabase.auth.refreshSession?.(undefined); // ensure token is fresh
+      } catch (e) {
+        // ignore — reset screen still opens; updateUser will surface any error
       }
-    };
-    const checkInitialUrl = () => {
-      // Web: INITIAL_URL was captured before supabase-js stripped the hash.
-      if (INITIAL_URL && looksLikeRecovery(INITIAL_URL)) {
+    }
+    // Open the reset screen in all cases a recovery link was used.
+    setShowLogin(false);
+    setNeedsVerification(false);
+    setShowResetPassword(true);
+  }
+
+  const checkInitialUrl = () => {
+    // Web: fragment was captured before supabase-js could strip the hash.
+    if (INITIAL_URL && isRecovery) {
+      setTimeout(applyRecovery, 300);
+      return;
+    }
+    // Native: ask expo-linking for the launch URL.
+    Linking.getInitialURL().then((url) => {
+      if (url && /[#&]type=recovery/.test(url)) {
         setTimeout(() => setShowResetPassword(true), 300);
-        return;
       }
-      // Native: ask expo-linking for the launch URL.
-      Linking.getInitialURL().then((url) => {
-        if (url && looksLikeRecovery(url)) {
-          setTimeout(() => setShowResetPassword(true), 300);
-        }
-      }).catch(() => {});
-    };
-    checkInitialUrl();
-    const listener = Linking.addEventListener('url', ({ url }) => {
-      if (looksLikeRecovery(url)) {
-        setShowResetPassword(true);
-      }
-    });
-    return () => listener.remove();
-  }, []);
+    }).catch(() => {});
+  };
+  checkInitialUrl();
+  const listener = Linking.addEventListener('url', ({ url }) => {
+    if (url && /[#&]type=recovery/.test(url)) {
+      setShowLogin(false);
+      setShowResetPassword(true);
+    }
+  });
+  return () => listener.remove();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, []);
 
   // Sign up / Sign in with Supabase.
   // On signup, if Supabase requires email confirmation the returned session is
