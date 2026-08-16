@@ -115,11 +115,14 @@ export default function App() {
     const sub = supabase.auth.onAuthStateChange((event, sess) => {
       setSession(sess);
       if (event === 'PASSWORD_RECOVERY') {
+        // Recovery link: open the reset screen and do NOT close it on the
+        // SIGNED_IN that follows (the recovery flow produces a signed-in
+        // temporary session). It closes only on save or user dismiss.
+        setShowLogin(false);
         setShowResetPassword(true);
       }
       if (event === 'SIGNED_IN') {
         setNeedsVerification(false);
-        setShowResetPassword(false);
         setShowLogin(false);
       }
       if (event === 'SIGNED_OUT') {
