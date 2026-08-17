@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { SafeAreaView, StatusBar, ActivityIndicator, View, Modal, Text, Alert } from 'react-native';
+import { SafeAreaView, StatusBar, ActivityIndicator, View, Modal, Text, Alert, Platform } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -229,7 +229,12 @@ useEffect(() => {
 
   // Send the "reset your password" email.
   const requestPasswordReset = useCallback(async (email) => {
-    const redirect = Linking.createURL('/');
+    // On web the recovery link redirects to a dedicated static page that handles
+    // the token deterministically (no Expo-SPA routing / hash-stripping issues).
+    // On native it uses the app's deep link scheme.
+    const redirect = Platform.OS === 'web'
+      ? (typeof window !== 'undefined' ? window.location.origin + '/reset.html' : 'https://grillo-parlante-rust.vercel.app/reset.html')
+      : Linking.createURL('/');
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
       redirectTo: redirect,
     });

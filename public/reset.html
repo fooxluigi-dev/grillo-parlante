@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<title>Grillo · Reimposta password</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    background: radial-gradient(900px 500px at 80% -10%, #12274a 0%, transparent 60%), linear-gradient(#02040a,#030712);
+    min-height:100vh; display:flex; align-items:center; justify-content:center;
+    font-family: -apple-system, system-ui, sans-serif; color:#e6e8ee; padding:24px;
+  }
+  .card{
+    background: rgba(8,10,18,.82); border:1px solid rgba(255,255,255,.12);
+    border-radius:24px; padding:32px 28px; width:min(92vw,420px);
+    box-shadow:0 20px 60px rgba(0,0,0,.6); text-align:center;
+  }
+  .mascot{font-size:52px}
+  h1{font-size:22px;font-weight:800;margin:10px 0 6px}
+  .sub{font-size:13px;color:#9ca3af;margin-bottom:22px;line-height:1.5}
+  label{display:block;font-size:12px;font-weight:600;color:#cbd5e1;text-align:left;margin:12px 0 4px 4px}
+  input{
+    width:100%; padding:13px 16px; border-radius:14px; border:1px solid rgba(255,255,255,.16);
+    background:rgba(255,255,255,.06); color:#fff; font-size:15px; outline:none;
+  }
+  input:focus{border-color:#e8a832}
+  button{
+    width:100%; margin-top:20px; padding:15px; border:0; border-radius:16px;
+    background:linear-gradient(135deg,#e8a832,#c47f1a); color:#111; font-size:16px;
+    font-weight:700; cursor:pointer;
+  }
+  button:disabled{opacity:.6}
+  .msg{font-size:13px;margin-top:14px;line-height:1.4}
+  .ok{color:#4ade80}
+  .err{color:#f87171}
+  .tiny{font-size:11px;color:#64748b;margin-top:18px}
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="mascot">🔑</div>
+    <h1>Imposta una nuova password</h1>
+    <p class="sub">Scegli una password sicura per il tuo account Grillo.</p>
+    <form id="form">
+      <label>Nuova password</label>
+      <input type="password" id="pw" placeholder="••••••••" autocomplete="new-password" required />
+      <label>Conferma password</label>
+      <input type="password" id="pw2" placeholder="••••••••" autocomplete="new-password" required />
+      <button id="btn" type="submit">Salva password</button>
+    </form>
+    <div class="msg" id="msg"></div>
+    <div class="tiny" id="debug">Grillo · Recupero password</div>
+  </div>
+
+<script>
+(function () {
+  const URL = "https://yfjlcdvntjtukuakhtzs.supabase.co";
+  const ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlmamxjZHZudGp0dWt1YWtodHpzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ5MDQxOTIsImV4cCI6MjEwMDQ4MDE5Mn0.dJrhz9fhMSHIKGlk4vCZOGe0NFzxBU0toDZfEFnjkLE";
+  const $ = (id) => document.getElementById(id);
+  const msg = $('msg');
+
+  function show(txt, cls) {
+    msg.className = 'msg ' + cls;
+    msg.textContent = txt;
+  }
+
+  function parseHash() {
+    const raw = window.location.hash.replace(/^#/, '');
+    const params = new URLSearchParams(raw);
+    return {
+      accessToken: params.get('access_token'),
+      refreshToken: params.get('refresh_token'),
+      type: params.get('type'),
+    };
+  }
+
+  const tok = parseHash();
+
+  // If we're not on a recovery link, tell the user how to get here.
+  if (tok.type !== 'recovery') {
+    show('Link non valido o scaduto. Richiedi un nuovo link di reset dall\u2019app.', 'err');
+    $('form').style.display = 'none';
+    return;
+  }
+
+  async function refreshAccess() {
+    // The link's access token may be for the temporary session; try a refresh
+    // with the refresh_token so the update call is accepted.
+    try {
+      const r = await fetch(URL + '/auth/v1/token?grant_type=refresh_token', {
+        method: 'POST',
+        headers: { apikey: ANON, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token: tok.refreshToken }),
+      });
+      if (r.ok) {
+        const d = await r.json();
+        return d.access_token || tok.accessToken;
+      }
+    } catch (e) {}
+    return tok.accessToken;
+  }
+
+  const form = $('form');
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const pw = $('pw').value, pw2 = $('pw2').value;
+    if (pw.length < 6) { show('La password deve avere almeno 6 caratteri.', 'err'); return; }
+    if (pw !== pw2) { show('Le password non coincidono.', 'err'); return; }
+    const btn = $('btn');
+    btn.disabled = true; btn.textContent = 'Salvataggio…';
+    show('', '');
+    try {
+      const access = await refreshAccess();
+      const r = await fetch(URL + '/auth/v1/user', {
+        method: 'PUT',
+        headers: {
+          apikey: ANON,
+          Authorization: 'Bearer ' + access,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ password: pw }),
+      });
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        throw new Error((d.msg) || ('Errore ' + r.status));
+      }
+      show('✓ Password aggiornata. Ora accedi con la nuova password.', 'ok');
+      btn.textContent = 'Fatto';
+      setTimeout(() => { window.location.href = window.location.origin + '/'; }, 1800);
+    } catch (err) {
+      show('Errore: ' + err.message, 'err');
+      btn.disabled = false; btn.textContent = 'Riprova';
+    }
+  });
+})();
+</script>
+</body>
+</html>
