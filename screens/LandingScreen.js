@@ -6,7 +6,6 @@ import {
 import { Colors } from '../theme/colors';
 import { AuthContext } from '../context/AuthContext';
 import UploadBookingScreen from './UploadBookingScreen';
-
 const { width: W, height: H } = Dimensions.get('window');
 const IS_WEB = Platform.OS === 'web';
 
@@ -210,7 +209,12 @@ function HeroText({ onLogin }) {
     <View style={styles.heroContainer}>
       <Animated.View style={[styles.heroBar, { opacity: opBar }]}>
         <Text style={styles.logo}>Grillo</Text>
-        <TouchableOpacity onPress={onLogin} activeOpacity={0.7}>
+        <TouchableOpacity
+          onPress={onLogin}
+          onClick={IS_WEB ? onLogin : undefined} // web: native click bypasses the ScrollView responder so the tap always lands
+          activeOpacity={0.7}
+          hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
+        >
           <Text style={styles.signIn}>Sign in</Text>
         </TouchableOpacity>
       </Animated.View>
