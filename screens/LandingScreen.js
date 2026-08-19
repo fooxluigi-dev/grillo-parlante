@@ -209,14 +209,6 @@ function HeroText({ onLogin }) {
     <View style={styles.heroContainer}>
       <Animated.View style={[styles.heroBar, { opacity: opBar }]}>
         <Text style={styles.logo}>Grillo</Text>
-        <TouchableOpacity
-          onPress={onLogin}
-          onClick={IS_WEB ? onLogin : undefined} // web: native click bypasses the ScrollView responder so the tap always lands
-          activeOpacity={0.7}
-          hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
-        >
-          <Text style={styles.signIn}>Sign in</Text>
-        </TouchableOpacity>
       </Animated.View>
 
       <View style={styles.heroCenter}>
@@ -819,19 +811,17 @@ export default function LandingScreen({ navigation, onLogin, onSignUp, onBooking
         </ImageBackground>
       </Animated.ScrollView>
 
-      {/* Web-only fixed Sign in (top-right) — lives OUTSIDE the ScrollView so
-          the ScrollView's tap-responder can never eat the press. */}
-      {IS_WEB && (
-        <TouchableOpacity
-          style={styles.fixedSignIn}
-          onPress={onLogin}
-          onClick={onLogin}
-          activeOpacity={0.7}
-          hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
-        >
-          <Text style={styles.fixedSignInText}>Sign in</Text>
-        </TouchableOpacity>
-      )}
+      {/* Fixed Sign in (top-right) — lives OUTSIDE the ScrollView so the
+          ScrollView's tap-responder can never eat the press (RN-web bug). */}
+      <TouchableOpacity
+        style={styles.fixedSignIn}
+        onPress={onLogin}
+        onClick={IS_WEB ? onLogin : undefined}
+        activeOpacity={0.7}
+        hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
+      >
+        <Text style={styles.fixedSignInText}>Sign in</Text>
+      </TouchableOpacity>
 
       {/* Upload modal — full-screen so the loading animation and result card are never cut */}
       <Modal visible={showUpload} animationType="slide" onRequestClose={() => setShowUpload(false)}>
