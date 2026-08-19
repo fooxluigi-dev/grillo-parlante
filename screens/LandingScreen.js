@@ -819,6 +819,20 @@ export default function LandingScreen({ navigation, onLogin, onSignUp, onBooking
         </ImageBackground>
       </Animated.ScrollView>
 
+      {/* Web-only fixed Sign in (top-right) — lives OUTSIDE the ScrollView so
+          the ScrollView's tap-responder can never eat the press. */}
+      {IS_WEB && (
+        <TouchableOpacity
+          style={styles.fixedSignIn}
+          onPress={onLogin}
+          onClick={onLogin}
+          activeOpacity={0.7}
+          hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
+        >
+          <Text style={styles.fixedSignInText}>Sign in</Text>
+        </TouchableOpacity>
+      )}
+
       {/* Upload modal — full-screen so the loading animation and result card are never cut */}
       <Modal visible={showUpload} animationType="slide" onRequestClose={() => setShowUpload(false)}>
         <UploadBookingScreen
@@ -849,6 +863,12 @@ const styles = StyleSheet.create({
   scene: { width: '100%', height: H, justifyContent: 'center', scrollSnapAlign: 'start', WebkitScrollSnapAlign: 'start' },
   logo: { fontSize: 16, fontWeight: '700', color: '#fff', letterSpacing: -0.3 },
   signIn: { fontSize: 13, fontWeight: '500', color: 'rgba(255,255,255,0.3)' },
+  fixedSignIn: {
+    position: 'absolute', top: 18, right: 20, zIndex: 50,
+    backgroundColor: 'rgba(255,255,255,0.08)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)',
+    paddingHorizontal: 16, paddingVertical: 8, borderRadius: 999,
+  },
+  fixedSignInText: { fontSize: 13, fontWeight: '600', color: '#fff' },
 
   sceneOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.55)' },
   sceneInner: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: 20 },
