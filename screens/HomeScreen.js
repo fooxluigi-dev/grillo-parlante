@@ -12,6 +12,7 @@ import EmptyStateIllustration from '../components/EmptyStateIllustration';
 import UploadBookingScreen from './UploadBookingScreen';
 import PreferenceQuiz from '../components/PreferenceQuiz';
 import { SupabaseTrips } from '../utils/supabase-trips';
+import { scheduleTripNotifications } from '../utils/notifications';
 
 const QUICK_ACTIONS = [
   { icon: '📸', label: 'Upload booking', desc: 'Scan confirmation', tab: null, action: 'upload' },
@@ -333,6 +334,15 @@ export default function HomeScreen({ pendingBooking: incomingBooking, onPendingB
       setTripCount(prev => prev + 1);
       setShowCelebration(false);
       await loadTrips();
+
+      // Pianifica le notifiche dinamiche del viaggio (gratis, sul dispositivo)
+      if (fetchedTrip) {
+        try {
+          await scheduleTripNotifications(fetchedTrip);
+        } catch (notifErr) {
+          console.error('[notifications] schedule on save:', notifErr?.message);
+        }
+      }
 
       // Navigate to TripDetail with data
       if (Platform.OS === 'web') {

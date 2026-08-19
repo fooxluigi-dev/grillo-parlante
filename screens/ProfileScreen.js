@@ -6,15 +6,18 @@ import {
 import { Colors } from '../theme/colors';
 import { AuthContext } from '../context/AuthContext';
 import { SupabaseTrips } from '../utils/supabase-trips';
+import { requestPermission, countScheduled } from '../utils/notifications';
 
 export default function ProfileScreen({ navigation }) {
   const { logout, currentUser } = useContext(AuthContext);
   const [notifications, setNotifications] = useState({
     weather: true,
     packing: true,
-    reminders: false,
+    reminders: true,
     tips: true,
   });
+  const [pushEnabled, setPushEnabled] = useState(null); // true/false — stato reale permesso
+  const [scheduledCount, setScheduledCount] = useState(0);
   const [tripCount, setTripCount] = useState(0);
   const [nextDays, setNextDays] = useState(null);
   const [chatCount, setChatCount] = useState('—');
@@ -32,10 +35,32 @@ export default function ProfileScreen({ navigation }) {
         } catch {}
       }
     }
+
+    // Stato reale del permesso push + contatore notifiche pianificate
+    // (sul web le notifiche locali non sono supportate da expo-notifications)
+    if (Platform.OS !== 'web') {
+      requestPermission().then(setPushEnabled);
+    } else {
+      setPushEnabled(false);
+    }
+    countScheduled().then(setScheduledCount);
   }, [currentUser?.id]);
 
   const toggleNotification = (key) => {
-    setNotifications(prev => ({ ...prev, [key]: !prev[key] }));
+    setNotifications(prev => {
+      const next = { ...prev, [key]: !prev[key] };
+      // Persisti la preferenza (opzionale, non blocca nulla)
+      try {
+        if (Platform.OS === 'web') localStorage.setItem('grillo_notif_prefs', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+
+    // Il toggle "reminders" governa le notifiche di viaggio reali:
+    // se lo attivi su iOS/Android, facciamo partire la richiesta di permesso.
+    if (key === 'reminders' && !notifications.reminders && Platform.OS !== 'web') {
+      requestPermission().then(granted => setPushEnabled(granted));
+    }
   };
 
   const handleLogout = () => {
@@ -91,6 +116,17 @@ export default function ProfileScreen({ navigation }) {
       {/* Notifications */}
       <View style={styles.sectionCard}>
         <Text style={styles.sectionTitle}>🔔 Notifications</Text>
+
+        {/* Stato reale delle notifiche (permesso + contatore pianificate) */}
+        <View style={styles.notifStatus}>
+          <Text style={styles.notifStatusText}>
+            {Platform.OS === 'web'
+              ? '🌐 Sul web le notifiche non sono ancora attive — provale su iPhone/Android.'
+              : pushEnabled
+                ? `✅ Notifiche attive · ${scheduledCount} promemoria pianificati per i tuoi viaggi`
+                : '⛔ Notifiche attualmente disattivate.'}
+          </Text>
+        </View>
 
         {[
           { key: 'weather', icon: '☀️', label: 'Weather alerts', sub: 'Daily forecast & rain warnings' },
@@ -241,6 +277,20 @@ const styles = StyleSheet.create({
   },
 
   // Notifications
+  notifStatus: {
+    backgroundColor: 'rgba(232,168,50,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(232,168,50,0.2)',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginBottom: 12,
+  },
+  notifStatusText: {
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.75)',
+    lineHeight: 17,
+  },
   notifRow: {
     flexDirection: 'row',
     alignItems: 'center',

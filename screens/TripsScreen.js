@@ -6,6 +6,7 @@ import { Colors } from '../theme/colors';
 import { useNavigation } from '@react-navigation/native';
 import { AuthContext } from '../context/AuthContext';
 import { SupabaseTrips } from '../utils/supabase-trips';
+import { cancelTripNotifications } from '../utils/notifications';
 
 export default function TripsScreen() {
   const navigation = useNavigation();
@@ -28,6 +29,8 @@ export default function TripsScreen() {
   const confirmDelete = (trip) => {
     const doDelete = async () => {
       await SupabaseTrips.remove(trip.id);
+      // Annulla le notifiche pianificate di questo viaggio
+      cancelTripNotifications(trip.id).catch(() => {});
       setTrips(prev => prev.filter(t => t.id !== trip.id));
     };
 
