@@ -10,7 +10,13 @@
         "simulator": false
       }
     },
-    "production": {}
+    "production": {},
+    "preview": {
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      }
+    }
   },
   "submit": {
     "production": {}
