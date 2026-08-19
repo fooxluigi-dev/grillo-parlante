@@ -1,5 +1,11 @@
 import { supabase } from './supabase';
 
+// Normalize DB rows (snake_case) to the camelCase shape the UI expects (checkIn/checkOut)
+function normalizeTrip(row) {
+  if (!row) return row;
+  return { ...row, checkIn: row.checkIn || row.start_date, checkOut: row.checkOut || row.end_date };
+}
+
 // Helper: parse "Aug 22" with optional year → "2026-08-22" for PostgreSQL DATE columns
 function toSqlDate(str, year) {
   if (!str) return null;
@@ -28,7 +34,7 @@ export const SupabaseTrips = {
       console.error('SupabaseTrips.getAll error:', error);
       return [];
     }
-    return data || [];
+    return (data || []).map(normalizeTrip);
   },
 
   async getById(tripId) {
@@ -41,7 +47,7 @@ export const SupabaseTrips = {
       console.error('SupabaseTrips.getById error:', error);
       return null;
     }
-    return data;
+    return normalizeTrip(data);
   },
 
   async add(trip, userId) {
@@ -62,7 +68,7 @@ export const SupabaseTrips = {
       console.error('SupabaseTrips.add error:', error);
       throw error;
     }
-    return data;
+    return normalizeTrip(data);
   },
 
   async update(tripId, updates) {
@@ -76,7 +82,7 @@ export const SupabaseTrips = {
       console.error('SupabaseTrips.update error:', error);
       throw error;
     }
-    return data;
+    return normalizeTrip(data);
   },
 
   async remove(tripId) {
