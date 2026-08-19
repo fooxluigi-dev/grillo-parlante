@@ -268,9 +268,16 @@ export default function HomeScreen({ pendingBooking: incomingBooking, onPendingB
     setLoadingItinerary(true);
 
     // Generate itinerary via DeepSeek
+    const bookingType = booking?.type || 'hotel';
     const dest = booking?.destination || 'Your destination';
-    const checkIn = booking?.checkIn || '';
-    const checkOut = booking?.checkOut || '';
+
+    // For events (museo/cinema/biglietto singolo) non ha senso un itinerario
+    // multi-giorno: usiamo la data dell'evento come unica data di riferimento,
+    // così il backend genera un piano da un giorno ruotato attorno all'evento.
+    const eventDate = booking?.event?.eventDate || booking?.event?.date || '';
+    const flightDate = booking?.flight?.departureDate || booking?.flight?.date || '';
+    let checkIn = booking?.checkIn || eventDate || flightDate || '';
+    let checkOut = booking?.checkOut || checkIn;
 
     try {
       const response = await apiCall(API_ENDPOINTS.ITINERARY, {
@@ -281,6 +288,7 @@ export default function HomeScreen({ pendingBooking: incomingBooking, onPendingB
           checkOut: checkOut || checkIn,
           preferences: preferences || {},
           hotel: booking?.hotel || '',
+          type: bookingType,
           year: preferences?.year || new Date().getFullYear(),
         }),
         signal: AbortSignal.timeout(60000),
