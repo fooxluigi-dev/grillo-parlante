@@ -4,7 +4,7 @@ import {
   Image, Platform, SafeAreaView, Animated, TextInput
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
-import type { ParsedBooking, BookingType } from '../types';
+import type { ParsedBooking, BookingType, EventBooking } from '../types';
 
 // API base URL comes from EXPO_PUBLIC_API_URL env var (set in .env.local)
 const API_BASE = process.env.EXPO_PUBLIC_API_URL;
@@ -30,9 +30,10 @@ interface ManualBookingState {
 interface UploadBookingScreenProps {
   onClose: () => void;
   onBookingParsed: (booking: ParsedBooking) => void;
+  onAddEventToTrip?: (booking: ParsedBooking) => void;
 }
 
-export default function UploadBookingScreen({ onClose, onBookingParsed }: UploadBookingScreenProps) {
+export default function UploadBookingScreen({ onClose, onBookingParsed, onAddEventToTrip }: UploadBookingScreenProps) {
   const [images, setImages] = useState<string[]>([]);        // base64 data URLs (max 3)
   const [parsing, setParsing] = useState<boolean>(false);
   const [phase, setPhase] = useState<number>(0);            // 0=pick 1=parsing 2=result
@@ -218,7 +219,9 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }: Upload
 
       if (resp.ok) {
         const j = await resp.json();
-        if (j?.destination && j.destination !== 'Unknown') {
+        const hasDestination = j?.destination && j.destination !== 'Unknown';
+        const isEventWithData = j?.type === 'event' && (j?.event?.eventName || j?.event?.venue);
+        if (hasDestination || isEventWithData) {
           result = { ...j, _isFallback: false } as ParsedBooking;
         } else {
           console.warn('API response without destination:', JSON.stringify(j).slice(0, 300));
@@ -322,14 +325,42 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }: Upload
     }
     if (d.confirmation && d.confirmation !== '—')
       t.push(`Ref ${d.confirmation} ✅`);
-    t.push('Let me put together something special for you... ✨');
-    t.push("I'll create the perfect itinerary, just give me a moment... 🦗");
+    if (type === 'event') {
+      t.push('An excursion — lovely! 🎟️');
+      t.push('Where should we add it? Pick a trip or start fresh...');
+    } else {
+      t.push('Let me put together something special for you... ✨');
+      t.push("I'll create the perfect itinerary, just give me a moment... 🦗");
+    }
     return t.filter(Boolean);
   };
 
   const confirmBooking = () => {
     if (parsed) onBookingParsed(parsed);
   };
+
+  // Build a ParsedBooking for a secondary event detected in a mixed upload
+  const buildExtraEventBooking = (main: ParsedBooking, x: any): ParsedBooking => ({
+    type: 'event',
+    destination: (x.venueCity as string) || main.destination || x.venue || 'Event',
+    checkIn: x.eventDate,
+    checkOut: x.eventDate,
+    confirmation: main.confirmation,
+    guests: null,
+    guestNames: null,
+    hotel: x.venue,
+    notes: null,
+    flight: main.flight,
+    event: {
+      eventName: x.eventName,
+      eventDate: x.eventDate,
+      eventTime: x.eventTime,
+      venue: x.venue,
+      ticketType: x.ticketType,
+      ticketCount: x.ticketCount,
+    },
+    _isFallback: false,
+  });
 
   // Open the editable form pre-filled from the parsed (or fallback) booking
   const openManual = () => {
@@ -557,9 +588,27 @@ export default function UploadBookingScreen({ onClose, onBookingParsed }: Upload
                   <View style={styles.divider} />
                   <View style={styles.row}><Text style={styles.label}>🔑 Confirmation</Text><Text style={styles.value}>{parsed.confirmation || '—'}</Text></View>
 
-                  <TouchableOpacity style={styles.confirmBtn} onPress={confirmBooking} activeOpacity={0.8}>
-                    <Text style={styles.confirmText}>✨ Create my trip</Text>
-                  </TouchableOpacity>
+                  {parsed.type === 'event' ? (
+                    <TouchableOpacity style={styles.confirmBtn} onPress={() => (onAddEventToTrip ? onAddEventToTrip(parsed) : confirmBooking())} activeOpacity={0.8}>
+                      <Text style={styles.confirmText}>➕ Add to my trip</Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <TouchableOpacity style={styles.confirmBtn} onPress={confirmBooking} activeOpacity={0.8}>
+                      <Text style={styles.confirmText}>✨ Create my trip</Text>
+                    </TouchableOpacity>
+                  )}
+
+                  {/* Secondary events detected in mixed uploads */}
+                  {parsed.type !== 'event' && parsed.extraEvents && parsed.extraEvents.length > 0 && (
+                    <View style={styles.extraEvents}>
+                      <Text style={styles.extraEventsLabel}>🎟️ Eventi trovati</Text>
+                      {(parsed.extraEvents || []).map((x: EventBooking, i: number) => (
+                        <TouchableOpacity key={i} style={styles.extraEventChip} onPress={() => onAddEventToTrip?.(buildExtraEventBooking(parsed, x))}>
+                          <Text style={styles.extraEventText}>🎟️ {x.eventName || x.venue || 'Event'}{x.eventDate ? ` · ${x.eventDate}` : ''} — Aggiungi</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  )}
                 </>
               )}
             </Animated.View>
@@ -634,6 +683,14 @@ const styles = StyleSheet.create({
     alignItems: 'center', marginTop: 20,
   },
   confirmText: { fontSize: 15, fontWeight: '800', color: '#0a0a0a' },
+
+  extraEvents: { marginTop: 16, gap: 8 },
+  extraEventsLabel: { fontSize: 12, fontWeight: '700', color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: 0.5 },
+  extraEventChip: {
+    backgroundColor: 'rgba(232,168,50,0.12)', borderRadius: 12, paddingVertical: 12, paddingHorizontal: 14,
+    borderWidth: 1, borderColor: 'rgba(232,168,50,0.3)', alignItems: 'center',
+  },
+  extraEventText: { fontSize: 13, fontWeight: '600', color: 'rgba(232,168,50,0.9)', textAlign: 'center' },
 
   manualBtn: {
     backgroundColor: 'rgba(232,168,50,0.15)', borderRadius: 12, paddingVertical: 10,

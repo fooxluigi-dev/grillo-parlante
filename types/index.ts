@@ -46,6 +46,7 @@ export interface ParsedBooking extends BaseBooking {
   guests: number | null;
   flight: FlightBooking;
   event: EventBooking;
+  extraEvents?: EventBooking[] | null;
   pages?: number;
   _ocrProvider?: 'gpt4o' | 'ocrspace' | 'provided' | 'auto';
   _validationWarnings?: Record<string, string[]>;

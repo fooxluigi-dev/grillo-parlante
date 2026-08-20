@@ -197,6 +197,9 @@ export default function HomeScreen({ pendingBooking: incomingBooking, onPendingB
   const [showCelebration, setShowCelebration] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [refreshing, setRefreshing] = useState(false);
+  const [showTripPicker, setShowTripPicker] = useState(false);
+  const [pendingEvent, setPendingEvent] = useState(null);
+  const [tripsList, setTripsList] = useState([]);
 
   const userId = currentUser?.id;
 
@@ -392,6 +395,118 @@ export default function HomeScreen({ pendingBooking: incomingBooking, onPendingB
     }
   };
 
+  // ─── Event → add to trip / single-day reminder ───
+  const buildEventDay = (booking) => {
+    const e = booking?.event || {};
+    const name = e.eventName || booking?.hotel || 'Event';
+    const venue = e.venue || booking?.hotel || '';
+    const date = e.eventDate || booking?.checkIn || '';
+    const time = e.eventTime || '';
+    return {
+      day: 'Day 1',
+      date: String(date || ''),
+      label: name,
+      icon: '🎟️',
+      subtitle: venue || date || 'Event day',
+      location: venue || booking?.destination || 'Venue',
+      activities: [{
+        time: time || 'Mattina',
+        icon: '🎟️',
+        title: name,
+        desc: venue || 'Event ticket',
+        price: e.ticketType || null,
+      }],
+    };
+  };
+
+  const mergeEventIntoItinerary = (trip, booking) => {
+    const days = Array.isArray(trip?.itinerary?.days)
+      ? trip.itinerary.days.map(d => ({ ...d, activities: [...(d.activities || [])] }))
+      : [];
+    const eventDay = buildEventDay(booking);
+    const dateStr = eventDay.date;
+    if (dateStr) {
+      const idx = days.findIndex(d => String(d.date || '') === String(dateStr));
+      if (idx >= 0) {
+        const day = days[idx];
+        days[idx] = { ...day, activities: [...day.activities, ...eventDay.activities], icon: day.icon || '🎟️' };
+      } else {
+        days.push(eventDay);
+      }
+    } else {
+      days.push(eventDay);
+    }
+    return { ...(trip.itinerary || {}), days };
+  };
+
+  const createEventReminderTrip = async (booking) => {
+    setLoadingItinerary(true);
+    try {
+      const e = booking?.event || {};
+      const name = e.eventName || booking?.hotel || 'Event';
+      const dest = booking?.destination && booking.destination !== 'your destination'
+        ? booking.destination
+        : (e.venue || name);
+      const eventDay = buildEventDay(booking);
+      const eventDate = e.eventDate || booking?.checkIn || '';
+      const saved = await SupabaseTrips.add({
+        title: name,
+        destination: dest,
+        checkIn: eventDate,
+        checkOut: eventDate,
+        booking_type: 'event',
+        booking_data: booking,
+        itinerary: { days: [eventDay] },
+        year: new Date().getFullYear(),
+      }, userId);
+
+      const fetched = await SupabaseTrips.getById(saved.id);
+      if (fetched) {
+        try { await scheduleTripNotifications(fetched); } catch (notifErr) { console.error('[notifications] event reminder:', notifErr?.message); }
+      }
+      setLoadingItinerary(false);
+      setPendingEvent(null);
+      setShowTripPicker(false);
+      await loadTrips();
+      navigation.navigate('TripDetail', { tripId: saved.id });
+    } catch (err) {
+      console.error('Event reminder creation error:', err);
+      setLoadingItinerary(false);
+      setErrorMsg(`❌ Could not save the event (${err?.message || 'unknown'}). Please try again.`);
+    }
+  };
+
+  const handleAddEventToTrip = async (booking) => {
+    if (!userId) {
+      setErrorMsg('🔒 Please sign in to save events to your trips.');
+      return;
+    }
+    const trips = await SupabaseTrips.getAll(userId);
+    if (trips.length === 0) {
+      // No trip yet → single-day reminder from the event
+      await createEventReminderTrip(booking);
+    } else {
+      setTripsList(trips);
+      setPendingEvent(booking);
+      setShowTripPicker(true);
+    }
+  };
+
+  const handleTripPicked = async (trip) => {
+    setShowTripPicker(false);
+    try {
+      const itinerary = mergeEventIntoItinerary(trip, pendingEvent);
+      await SupabaseTrips.update(trip.id, { itinerary });
+      setPendingEvent(null);
+      await loadTrips();
+      if (Platform.OS === 'web') alert(`✅ Evento aggiunto a "${trip.title || trip.destination}"`);
+      navigation.navigate('TripDetail', { tripId: trip.id });
+    } catch (err) {
+      console.error('Attach event error:', err);
+      setErrorMsg(`❌ Could not add the event (${err?.message || 'unknown'}).`);
+    }
+  };
+
   const handleTabNav = (tabName) => {
     navigation.navigate(tabName);
   };
@@ -522,7 +637,34 @@ export default function HomeScreen({ pendingBooking: incomingBooking, onPendingB
 
       {/* Upload Booking Modal */}
       <Modal visible={showUpload} animationType="slide" onRequestClose={() => setShowUpload(false)}>
-        <UploadBookingScreen onClose={() => setShowUpload(false)} onBookingParsed={handleBookingParsed} />
+        <UploadBookingScreen onClose={() => setShowUpload(false)} onBookingParsed={handleBookingParsed} onAddEventToTrip={handleAddEventToTrip} />
+      </Modal>
+
+      {/* Event → Trip Picker Modal */}
+      <Modal visible={showTripPicker} transparent animationType="fade" onRequestClose={() => setShowTripPicker(false)}>
+        <View style={styles.pickerOverlay}>
+          <View style={styles.pickerCard}>
+            <Text style={styles.pickerTitle}>➕ Dove lo aggiungo?</Text>
+            <Text style={styles.pickerSub}>
+              {pendingEvent?.event?.eventName || pendingEvent?.hotel || 'Event'} — scegli una trip
+            </Text>
+            <ScrollView style={{ maxHeight: 280 }}>
+              <TouchableOpacity style={styles.pickerItem} onPress={() => createEventReminderTrip(pendingEvent)}>
+                <Text style={styles.pickerItemTitle}>🆕 Crea una trip da questo evento</Text>
+                <Text style={styles.pickerItemSub}>Giorno singolo, come promemoria</Text>
+              </TouchableOpacity>
+              {tripsList.map(t => (
+                <TouchableOpacity key={t.id} style={styles.pickerItem} onPress={() => handleTripPicked(t)}>
+                  <Text style={styles.pickerItemTitle}>{t.title || t.destination}</Text>
+                  <Text style={styles.pickerItemSub}>{t.destination} · {t.start_date || ''} → {t.end_date || ''}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+            <TouchableOpacity style={styles.pickerCancel} onPress={() => setShowTripPicker(false)}>
+              <Text style={styles.pickerCancelText}>Annulla</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
       </Modal>
 
       {/* Preference Quiz Modal */}
@@ -700,4 +842,28 @@ const styles = StyleSheet.create({
   celebDot: {
     width: 8, height: 8, borderRadius: 4, backgroundColor: Colors.gold,
   },
+
+  // Event trip picker
+  pickerOverlay: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'center', alignItems: 'center', padding: 24,
+  },
+  pickerCard: {
+    backgroundColor: '#141414', borderRadius: 20, padding: 20,
+    width: '100%', maxWidth: 400,
+    borderWidth: 1, borderColor: 'rgba(232,168,50,0.25)',
+  },
+  pickerTitle: { fontSize: 17, fontWeight: '800', color: Colors.gold, textAlign: 'center', marginBottom: 4 },
+  pickerSub: { fontSize: 12, color: 'rgba(255,255,255,0.5)', textAlign: 'center', marginBottom: 16, lineHeight: 17 },
+  pickerItem: {
+    backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 12, padding: 14, marginBottom: 8,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
+  },
+  pickerItemTitle: { fontSize: 14, fontWeight: '700', color: '#fff' },
+  pickerItemSub: { fontSize: 12, color: 'rgba(255,255,255,0.45)', marginTop: 2 },
+  pickerCancel: {
+    marginTop: 12, paddingVertical: 12, borderRadius: 12, alignItems: 'center',
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
+  },
+  pickerCancelText: { fontSize: 14, fontWeight: '600', color: 'rgba(255,255,255,0.6)' },
 });

@@ -57,6 +57,7 @@ export const SupabaseTrips = {
         user_id: userId,
         title: trip.title || 'My trip',
         destination: trip.destination || '',
+        booking_type: trip.booking_type || null,
         start_date: toSqlDate(trip.start_date || trip.checkIn, trip.year),
         end_date: toSqlDate(trip.end_date || trip.checkOut, trip.year),
         booking_data: trip.booking_data || trip,
