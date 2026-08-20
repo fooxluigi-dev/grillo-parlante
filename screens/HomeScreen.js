@@ -332,7 +332,14 @@ export default function HomeScreen({ pendingBooking: incomingBooking, onPendingB
           }
         }
       } catch (dbErr) {
-        console.error('Supabase save error (non-critical):', dbErr);
+        console.error('Supabase save error:', dbErr);
+        // Surface the real error — never fail silently (the user would see a
+        // fake "trip created" that disappears on refresh).
+        setLoadingItinerary(false);
+        setPendingBooking(null);
+        setShowCelebration(false);
+        setErrorMsg(`❌ Could not save the trip (${dbErr?.message || 'unknown error'}). Please try again.`);
+        return;
       }
 
       setLoadingItinerary(false);
@@ -447,19 +454,13 @@ export default function HomeScreen({ pendingBooking: incomingBooking, onPendingB
     }
   };
 
-  const handleAddEventToTrip = async (booking, fromMixed) => {
+  const handleAddEventToTrip = async (booking) => {
     if (!userId) {
       setErrorMsg('🔒 Please sign in to save events to your trips.');
       return;
     }
     const trips = await SupabaseTrips.getAll(userId);
     if (trips.length === 0) {
-      if (fromMixed) {
-        // Mixed upload: the event is attached automatically to the trip created
-        // by "Create my trip" — never create a separate thing here.
-        setErrorMsg('ℹ️ Crea prima la trip principale: gli eventi caricati assieme verranno aggiunti automaticamente.');
-        return;
-      }
       // Single event, no trip yet → single-day reminder from the event
       await createEventReminderTrip(booking);
     } else {

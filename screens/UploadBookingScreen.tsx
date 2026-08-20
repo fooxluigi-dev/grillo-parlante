@@ -4,8 +4,7 @@ import {
   Image, Platform, SafeAreaView, Animated, TextInput
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
-import type { ParsedBooking, BookingType, EventBooking } from '../types';
-import { eventBookingFromExtra } from '../utils/events';
+import type { ParsedBooking, BookingType } from '../types';
 
 // API base URL comes from EXPO_PUBLIC_API_URL env var (set in .env.local)
 const API_BASE = process.env.EXPO_PUBLIC_API_URL;
@@ -576,17 +575,6 @@ export default function UploadBookingScreen({ onClose, onBookingParsed, onAddEve
                     </TouchableOpacity>
                   )}
 
-                  {/* Secondary events detected in mixed uploads */}
-                  {parsed.type !== 'event' && parsed.extraEvents && parsed.extraEvents.length > 0 && (
-                    <View style={styles.extraEvents}>
-                      <Text style={styles.extraEventsLabel}>🎟️ Eventi trovati</Text>
-                      {(parsed.extraEvents || []).map((x: EventBooking, i: number) => (
-                        <TouchableOpacity key={i} style={styles.extraEventChip} onPress={() => onAddEventToTrip?.(eventBookingFromExtra(parsed, x), true)}>
-                          <Text style={styles.extraEventText}>🎟️ {x.eventName || x.venue || 'Event'}{x.eventDate ? ` · ${x.eventDate}` : ''} — Aggiungi</Text>
-                        </TouchableOpacity>
-                      ))}
-                    </View>
-                  )}
                 </>
               )}
             </Animated.View>
@@ -661,14 +649,6 @@ const styles = StyleSheet.create({
     alignItems: 'center', marginTop: 20,
   },
   confirmText: { fontSize: 15, fontWeight: '800', color: '#0a0a0a' },
-
-  extraEvents: { marginTop: 16, gap: 8 },
-  extraEventsLabel: { fontSize: 12, fontWeight: '700', color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: 0.5 },
-  extraEventChip: {
-    backgroundColor: 'rgba(232,168,50,0.12)', borderRadius: 12, paddingVertical: 12, paddingHorizontal: 14,
-    borderWidth: 1, borderColor: 'rgba(232,168,50,0.3)', alignItems: 'center',
-  },
-  extraEventText: { fontSize: 13, fontWeight: '600', color: 'rgba(232,168,50,0.9)', textAlign: 'center' },
 
   manualBtn: {
     backgroundColor: 'rgba(232,168,50,0.15)', borderRadius: 12, paddingVertical: 10,
