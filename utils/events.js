@@ -139,18 +139,26 @@ export function mergeEventIntoItinerary(trip, booking) {
 
   if (idx >= 0) {
     const day = days[idx];
-    const acts = [...(day.activities || [])];
+    const oldActs = day.activities || [];
+    // a day is "event-only" when it has no LLM-suggested activities
+    const isEventDay = oldActs.length === 0 || oldActs.every(a => a.icon === '🎟️');
+    const evActs = [];
     for (const ev of eventDay.activities) {
-      // skip if the same activity is already in the day
-      const dup = acts.find(a => String(a?.title || '').toLowerCase() === String(ev.title || '').toLowerCase());
-      if (dup) continue;
-      // insert chronologically: before the first activity that comes later
-      // (a booked clock-time event goes before generic same-slot activities)
-      const rank = activityTimeRank(ev);
-      const pos = acts.findIndex(a => activityTimeRank(a) >= rank);
-      acts.splice(pos < 0 ? acts.length : pos, 0, ev);
+      // skip if the same activity is already in the day (idempotent re-merge)
+      if (oldActs.some(a => String(a?.title || '').toLowerCase() === String(ev.title || '').toLowerCase())) continue;
+      evActs.push(ev);
     }
-    days[idx] = { ...day, activities: acts, icon: day.icon || '🎟️' };
+    if (evActs.length === 0) {
+      days[idx] = day; // nothing new
+    } else if (isEventDay) {
+      // already event-only (or empty): append + keep chronological order
+      const acts = [...oldActs, ...evActs].sort((a, b) => activityTimeRank(a) - activityTimeRank(b));
+      days[idx] = { ...day, activities: acts };
+    } else {
+      // the user's real event is the ONLY thing that stays that day:
+      // replace the LLM-suggested day with the event day
+      days[idx] = { ...eventDay, day: day.day || eventDay.day, date: day.date || eventDay.date };
+    }
   } else if (evDate && baseDate) {
     // Insert at the correct chronological position (month/day comparison)
     let pos = days.length;
