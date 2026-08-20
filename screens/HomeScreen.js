@@ -13,6 +13,7 @@ import UploadBookingScreen from './UploadBookingScreen';
 import PreferenceQuiz from '../components/PreferenceQuiz';
 import { SupabaseTrips } from '../utils/supabase-trips';
 import { scheduleTripNotifications } from '../utils/notifications';
+import { eventBookingFromExtra, buildEventDay, mergeEventIntoItinerary } from '../utils/events';
 
 const QUICK_ACTIONS = [
   { icon: '📸', label: 'Upload booking', desc: 'Scan confirmation', tab: null, action: 'upload' },
@@ -316,6 +317,19 @@ export default function HomeScreen({ pendingBooking: incomingBooking, onPendingB
             itinerary,
             year: preferences?.year || new Date().getFullYear(),
           }, userId);
+
+          // Mixed upload: attach secondary events (excursions, tickets) to THIS trip
+          if (booking?.extraEvents?.length) {
+            let merged = null;
+            for (const x of booking.extraEvents) {
+              const ev = eventBookingFromExtra(booking, x);
+              merged = mergeEventIntoItinerary({ ...savedTrip, itinerary: merged || savedTrip.itinerary }, ev);
+            }
+            if (merged) {
+              await SupabaseTrips.update(savedTrip.id, { itinerary: merged });
+              console.log(`[events] attached ${booking.extraEvents.length} event(s) to trip ${savedTrip.id}`);
+            }
+          }
         }
       } catch (dbErr) {
         console.error('Supabase save error (non-critical):', dbErr);
@@ -396,49 +410,6 @@ export default function HomeScreen({ pendingBooking: incomingBooking, onPendingB
   };
 
   // ─── Event → add to trip / single-day reminder ───
-  const buildEventDay = (booking) => {
-    const e = booking?.event || {};
-    const name = e.eventName || booking?.hotel || 'Event';
-    const venue = e.venue || booking?.hotel || '';
-    const date = e.eventDate || booking?.checkIn || '';
-    const time = e.eventTime || '';
-    return {
-      day: 'Day 1',
-      date: String(date || ''),
-      label: name,
-      icon: '🎟️',
-      subtitle: venue || date || 'Event day',
-      location: venue || booking?.destination || 'Venue',
-      activities: [{
-        time: time || 'Mattina',
-        icon: '🎟️',
-        title: name,
-        desc: venue || 'Event ticket',
-        price: e.ticketType || null,
-      }],
-    };
-  };
-
-  const mergeEventIntoItinerary = (trip, booking) => {
-    const days = Array.isArray(trip?.itinerary?.days)
-      ? trip.itinerary.days.map(d => ({ ...d, activities: [...(d.activities || [])] }))
-      : [];
-    const eventDay = buildEventDay(booking);
-    const dateStr = eventDay.date;
-    if (dateStr) {
-      const idx = days.findIndex(d => String(d.date || '') === String(dateStr));
-      if (idx >= 0) {
-        const day = days[idx];
-        days[idx] = { ...day, activities: [...day.activities, ...eventDay.activities], icon: day.icon || '🎟️' };
-      } else {
-        days.push(eventDay);
-      }
-    } else {
-      days.push(eventDay);
-    }
-    return { ...(trip.itinerary || {}), days };
-  };
-
   const createEventReminderTrip = async (booking) => {
     setLoadingItinerary(true);
     try {
@@ -476,14 +447,20 @@ export default function HomeScreen({ pendingBooking: incomingBooking, onPendingB
     }
   };
 
-  const handleAddEventToTrip = async (booking) => {
+  const handleAddEventToTrip = async (booking, fromMixed) => {
     if (!userId) {
       setErrorMsg('🔒 Please sign in to save events to your trips.');
       return;
     }
     const trips = await SupabaseTrips.getAll(userId);
     if (trips.length === 0) {
-      // No trip yet → single-day reminder from the event
+      if (fromMixed) {
+        // Mixed upload: the event is attached automatically to the trip created
+        // by "Create my trip" — never create a separate thing here.
+        setErrorMsg('ℹ️ Crea prima la trip principale: gli eventi caricati assieme verranno aggiunti automaticamente.');
+        return;
+      }
+      // Single event, no trip yet → single-day reminder from the event
       await createEventReminderTrip(booking);
     } else {
       setTripsList(trips);

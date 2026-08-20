@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import type { ParsedBooking, BookingType, EventBooking } from '../types';
+import { eventBookingFromExtra } from '../utils/events';
 
 // API base URL comes from EXPO_PUBLIC_API_URL env var (set in .env.local)
 const API_BASE = process.env.EXPO_PUBLIC_API_URL;
@@ -30,7 +31,7 @@ interface ManualBookingState {
 interface UploadBookingScreenProps {
   onClose: () => void;
   onBookingParsed: (booking: ParsedBooking) => void;
-  onAddEventToTrip?: (booking: ParsedBooking) => void;
+  onAddEventToTrip?: (booking: ParsedBooking, fromMixed?: boolean) => void;
 }
 
 export default function UploadBookingScreen({ onClose, onBookingParsed, onAddEventToTrip }: UploadBookingScreenProps) {
@@ -339,29 +340,6 @@ export default function UploadBookingScreen({ onClose, onBookingParsed, onAddEve
     if (parsed) onBookingParsed(parsed);
   };
 
-  // Build a ParsedBooking for a secondary event detected in a mixed upload
-  const buildExtraEventBooking = (main: ParsedBooking, x: any): ParsedBooking => ({
-    type: 'event',
-    destination: (x.venueCity as string) || main.destination || x.venue || 'Event',
-    checkIn: x.eventDate,
-    checkOut: x.eventDate,
-    confirmation: main.confirmation,
-    guests: null,
-    guestNames: null,
-    hotel: x.venue,
-    notes: null,
-    flight: main.flight,
-    event: {
-      eventName: x.eventName,
-      eventDate: x.eventDate,
-      eventTime: x.eventTime,
-      venue: x.venue,
-      ticketType: x.ticketType,
-      ticketCount: x.ticketCount,
-    },
-    _isFallback: false,
-  });
-
   // Open the editable form pre-filled from the parsed (or fallback) booking
   const openManual = () => {
     if (!parsed) return;
@@ -603,7 +581,7 @@ export default function UploadBookingScreen({ onClose, onBookingParsed, onAddEve
                     <View style={styles.extraEvents}>
                       <Text style={styles.extraEventsLabel}>🎟️ Eventi trovati</Text>
                       {(parsed.extraEvents || []).map((x: EventBooking, i: number) => (
-                        <TouchableOpacity key={i} style={styles.extraEventChip} onPress={() => onAddEventToTrip?.(buildExtraEventBooking(parsed, x))}>
+                        <TouchableOpacity key={i} style={styles.extraEventChip} onPress={() => onAddEventToTrip?.(eventBookingFromExtra(parsed, x), true)}>
                           <Text style={styles.extraEventText}>🎟️ {x.eventName || x.venue || 'Event'}{x.eventDate ? ` · ${x.eventDate}` : ''} — Aggiungi</Text>
                         </TouchableOpacity>
                       ))}
