@@ -84,10 +84,31 @@ export function buildEventDay(booking) {
       time: time || 'Mattina',
       icon: '🎟️',
       title: name,
-      desc: venue || 'Event ticket',
-      price: e.ticketType || null,
+      desc: [venue, e.ticketType].filter(Boolean).join(' · ') || 'Event ticket',
+      price: null,
     }],
   };
+}
+
+// Chronological rank for an activity's time field:
+// 'Colazione' < 'Mattina' < 'Pranzo' < 'Pomeriggio' < 'Sera' < 'Notte',
+// clock times map onto the same scale (09:30 → Mattina, 18:00 → Sera)
+const TIME_RANK = { colazione: 0, mattina: 1, pranzo: 2, pomeriggio: 3, sera: 4, notte: 5 };
+
+function activityTimeRank(a) {
+  const t = String(a?.time || '').trim().toLowerCase();
+  if (TIME_RANK[t] !== undefined) return TIME_RANK[t];
+  const m = t.match(/(\d{1,2}):(\d{2})/);
+  if (m) {
+    const h = parseInt(m[1], 10);
+    if (h < 8) return 0;
+    if (h < 12) return 1;
+    if (h < 15) return 2;
+    if (h < 19) return 3;
+    if (h < 23) return 4;
+    return 5;
+  }
+  return 2;
 }
 
 // Merge an event into a trip's itinerary:
@@ -118,7 +139,18 @@ export function mergeEventIntoItinerary(trip, booking) {
 
   if (idx >= 0) {
     const day = days[idx];
-    days[idx] = { ...day, activities: [...day.activities, ...eventDay.activities], icon: day.icon || '🎟️' };
+    const acts = [...(day.activities || [])];
+    for (const ev of eventDay.activities) {
+      // skip if the same activity is already in the day
+      const dup = acts.find(a => String(a?.title || '').toLowerCase() === String(ev.title || '').toLowerCase());
+      if (dup) continue;
+      // insert chronologically: before the first activity that comes later
+      // (a booked clock-time event goes before generic same-slot activities)
+      const rank = activityTimeRank(ev);
+      const pos = acts.findIndex(a => activityTimeRank(a) >= rank);
+      acts.splice(pos < 0 ? acts.length : pos, 0, ev);
+    }
+    days[idx] = { ...day, activities: acts, icon: day.icon || '🎟️' };
   } else if (evDate && baseDate) {
     // Insert at the correct chronological position (month/day comparison)
     let pos = days.length;
