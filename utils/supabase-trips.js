@@ -6,17 +6,27 @@ function normalizeTrip(row) {
   return { ...row, checkIn: row.checkIn || row.start_date, checkOut: row.checkOut || row.end_date };
 }
 
-// Helper: parse "Aug 22" with optional year → "2026-08-22" for PostgreSQL DATE columns
+// Helper: parse "Aug 22" with optional year → "2026-08-22" for PostgreSQL DATE columns.
+// NEVER rely on `new Date('Aug 22')` — JS parses it as year 2000 and toISOString()
+// shifts it to UTC (previous day in CEST). Build the SQL date from local components.
 function toSqlDate(str, year) {
   if (!str) return null;
-  const d = new Date(str);
-  if (!isNaN(d)) return d.toISOString().split('T')[0];
+  if (/^\d{4}-\d{2}-\d{2}/.test(str)) return str.slice(0, 10);
   const months = {Jan:'01',Feb:'02',Mar:'03',Apr:'04',May:'05',Jun:'06',
                   Jul:'07',Aug:'08',Sep:'09',Oct:'10',Nov:'11',Dec:'12'};
-  const parts = str.split(' ');
-  if (parts.length >= 2 && months[parts[0]]) {
-    const y = year || new Date().getFullYear();
-    return `${y}-${months[parts[0]]}-${String(parseInt(parts[1])).padStart(2, '0')}`;
+  const m1 = str.trim().match(/^([A-Za-z]{3})[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:\s*,?\s*(\d{4}))?$/);
+  if (m1 && months[m1[1]]) {
+    const y = m1[3] || year || new Date().getFullYear();
+    return `${y}-${months[m1[1]]}-${String(parseInt(m1[2], 10)).padStart(2, '0')}`;
+  }
+  const m2 = str.trim().match(/^(\d{1,2})\s+([A-Za-z]{3})[a-z]*\.?(?:\s*,?\s*(\d{4}))?$/);
+  if (m2 && months[m2[2]]) {
+    const y = m2[3] || year || new Date().getFullYear();
+    return `${y}-${months[m2[2]]}-${String(parseInt(m2[1], 10)).padStart(2, '0')}`;
+  }
+  const d = new Date(str);
+  if (!isNaN(d)) {
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   }
   return null;
 }

@@ -30,6 +30,12 @@ function sameDay(a, b) {
   return a.getDate() === b.getDate() && a.getMonth() === b.getMonth();
 }
 
+// Normalize to a fixed year so day-diffs are year-independent
+// (dates may carry year 2000 from JS parsing vs the real year)
+function monthDay(d) {
+  return new Date(2000, d.getMonth(), d.getDate());
+}
+
 function itDayLabel(d) {
   return `${WEEKDAYS_IT[d.getDay()]} ${d.getDate()}`;
 }
@@ -99,7 +105,7 @@ export function mergeEventIntoItinerary(trip, booking) {
   let idx = -1;
   if (evDate) {
     if (baseDate) {
-      const diff = Math.round((evDate - baseDate) / 86400000);
+      const diff = Math.round((monthDay(evDate) - monthDay(baseDate)) / 86400000);
       if (diff >= 0 && diff < days.length) idx = diff;
     }
     if (idx < 0) {
@@ -114,11 +120,11 @@ export function mergeEventIntoItinerary(trip, booking) {
     const day = days[idx];
     days[idx] = { ...day, activities: [...day.activities, ...eventDay.activities], icon: day.icon || '🎟️' };
   } else if (evDate && baseDate) {
-    // Insert at the correct chronological position
+    // Insert at the correct chronological position (month/day comparison)
     let pos = days.length;
     for (let i = 0; i < days.length; i++) {
       const dd = parseEventDate(days[i].day) || (() => { const x = new Date(baseDate); x.setDate(x.getDate() + i); return x; })();
-      if (evDate.getTime() < dd.getTime()) { pos = i; break; }
+      if (monthDay(evDate).getTime() < monthDay(dd).getTime()) { pos = i; break; }
     }
     days.splice(pos, 0, eventDay);
   } else {
