@@ -565,6 +565,15 @@ export default function UploadBookingScreen({ onClose, onBookingParsed, onAddEve
                   <View style={styles.divider} />
                   <View style={styles.row}><Text style={styles.label}>🔑 Confirmation</Text><Text style={styles.value}>{parsed.confirmation || '—'}</Text></View>
 
+                  {/* Secondary events: visible info only — they are attached automatically to the trip */}
+                  {parsed.type !== 'event' && parsed.extraEvents && parsed.extraEvents.length > 0 && (
+                    <View style={styles.extraInfo}>
+                      <Text style={styles.extraInfoText}>
+                        🎟️ Eventi inclusi automaticamente: {parsed.extraEvents.map((x: { eventName?: string | null; venue?: string | null }) => x.eventName || x.venue || 'Event').join(', ')}
+                      </Text>
+                    </View>
+                  )}
+
                   {parsed.type === 'event' ? (
                     <TouchableOpacity style={styles.confirmBtn} onPress={() => (onAddEventToTrip ? onAddEventToTrip(parsed) : confirmBooking())} activeOpacity={0.8}>
                       <Text style={styles.confirmText}>➕ Add to my trip</Text>
@@ -649,6 +658,13 @@ const styles = StyleSheet.create({
     alignItems: 'center', marginTop: 20,
   },
   confirmText: { fontSize: 15, fontWeight: '800', color: '#0a0a0a' },
+
+  extraInfo: {
+    marginTop: 16, backgroundColor: 'rgba(232,168,50,0.08)', borderRadius: 12,
+    paddingVertical: 10, paddingHorizontal: 12,
+    borderWidth: 1, borderColor: 'rgba(232,168,50,0.2)',
+  },
+  extraInfoText: { fontSize: 12, fontWeight: '600', color: 'rgba(232,168,50,0.85)', textAlign: 'center', lineHeight: 17 },
 
   manualBtn: {
     backgroundColor: 'rgba(232,168,50,0.15)', borderRadius: 12, paddingVertical: 10,
