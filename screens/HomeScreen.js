@@ -313,6 +313,7 @@ export default function HomeScreen({ pendingBooking: incomingBooking, onPendingB
             destination: dest,
             start_date: checkIn,
             end_date: checkOut,
+            booking_type: bookingType,
             booking_data: booking,
             itinerary,
             year: preferences?.year || new Date().getFullYear(),
